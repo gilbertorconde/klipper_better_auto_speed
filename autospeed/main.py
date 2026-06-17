@@ -184,17 +184,35 @@ class AutoSpeed:
                 "home": self.gcode_move.homing_position[index]
             }
 
+    def _save_to_config(self, gcmd, accel=None, velocity=None):
+        configfile = self.printer.lookup_object('configfile')
+        saved = []
+        if accel is not None:
+            configfile.set('printer', 'max_accel', round(accel))
+            saved.append(f"max_accel={round(accel)}")
+        if velocity is not None:
+            configfile.set('printer', 'max_velocity', round(velocity))
+            saved.append(f"max_velocity={round(velocity)}")
+        if saved:
+            self.gcode.respond_info(
+                "AUTO SPEED queued to [printer]: " + ", ".join(saved) +
+                "\nRun SAVE_CONFIG to apply (this rewrites printer.cfg and restarts Klipper).")
+
     cmd_AUTO_SPEED_help = ("Automatically find your printer's maximum acceleration/velocity")
     def cmd_AUTO_SPEED(self, gcmd):
         self._check_homed(gcmd)
 
         validate = gcmd.get_int('VALIDATE', 0, minval=0, maxval=1)
+        save = gcmd.get_int('SAVE', 0, minval=0, maxval=1)
 
         self._prepare(gcmd) # Make sure the printer is level, [check endstop variance]
 
         move_z = gcmd.get_int('Z', None)
         if move_z is not None:
             self._move([None, None, move_z], self.th_veloc)
+
+        # Let this command handle saving so accel/velocity are queued together.
+        gcmd._params["SAVE"] = 0
 
         start = perf_counter()
         accel_results = self.cmd_AUTO_SPEED_ACCEL(gcmd)
@@ -215,6 +233,9 @@ class AutoSpeed:
         respond += f"Recommended accel: {accel_results.vals['rec']:.0f}\n"
         respond += f"Recommended velocity: {veloc_results.vals['rec']:.0f}\n"
         self.gcode.respond_info(respond)
+
+        if save:
+            self._save_to_config(gcmd, accel=accel_results.vals['rec'], velocity=veloc_results.vals['rec'])
 
         if validate:
             gcmd._params["ACCEL"] = accel_results.vals['rec']
@@ -274,6 +295,9 @@ class AutoSpeed:
         respond += f"Recommended acceleration: {rw.vals['rec']:.0f}\n"
 
         self.gcode.respond_info(respond)
+
+        if gcmd.get_int('SAVE', 0, minval=0, maxval=1):
+            self._save_to_config(gcmd, accel=rw.vals['rec'])
         return rw
 
     cmd_AUTO_SPEED_VELOCITY_help = ("Automatically find your printer's maximum velocity")
@@ -329,6 +353,9 @@ class AutoSpeed:
         respond += f"Recommended velocity: {rw.vals['rec']:.0f}\n"
 
         self.gcode.respond_info(respond)
+
+        if gcmd.get_int('SAVE', 0, minval=0, maxval=1):
+            self._save_to_config(gcmd, velocity=rw.vals['rec'])
         return rw
 
     cmd_AUTO_SPEED_VALIDATE_help = ("Validate your printer's acceleration/velocity don't miss steps")

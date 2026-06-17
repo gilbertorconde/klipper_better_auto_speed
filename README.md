@@ -58,7 +58,7 @@ Using Ellis' pattern (AUTO_SPEED_VALIDATE) is **NOT** a safe movement pattern. P
  - [ ] Export printer results as a 'benchmark' to a database to see average speeds for different printers
  - [ ] Make _ACCEL/_VELOCITY smarter, based on printer size
  - [ ] Add support for running through moonraker (enables scripting different commands, arguments)
- - [ ] Save validated/measured results to printer config (like SAVE_CONFIG)
+ - [X] Save validated/measured results to printer config (like SAVE_CONFIG)
  - [ ] Couple ACCEL/VELOCITY similar to AUTO_SPEED_GRAPH
    - [ ] Add AUTO_SPEED ACCEL=10000 - to find what velocity lets you use accel 10000
    - [ ] Add AUTO_SPEED VELOC=500 - to find what accel lets you use velocity 500
@@ -194,6 +194,7 @@ VELOCITY_MAX      | 5000.0  | Maximum velocity test may try
 VELOCITY_ACCU     | 0.05    | Keep binary searching until the result is within this percentage
 LEVEL             | 1       | Level the printer if it's not leveled
 VARIANCE          | 1       | Check endstop variance
+SAVE              | 0       | Queue recommended max_accel/max_velocity to `[printer]` (run `SAVE_CONFIG` to apply)
 
 #### AUTO_SPEED_ACCEL
  `AUTO_SPEED_ACCEL` find maximum acceleration
@@ -206,6 +207,7 @@ VARIANCE          | 1       | Check endstop variance
  ACCEL_MIN  | 1000.0  | Minimum acceleration test may try
  ACCEL_MAX  | 50000.0 | Maximum acceleration test may try
  ACCEL_ACCU | 0.05    | Keep binary searching until the result is within this percentage
+ SAVE       | 0       | Queue recommended max_accel to `[printer]` (run `SAVE_CONFIG` to apply)
 
 #### AUTO_SPEED_VELOCITY
  `AUTO_SPEED_VELOCITY` finds maximum velocity
@@ -218,6 +220,7 @@ VARIANCE          | 1       | Check endstop variance
  VELOCITY_MIN  | 100.0   | Minimum velocity test may try
  VELOCITY_MAX  | 5000.0  | Maximum velocity test may try
  VELOCITY_ACCU | 0.05    | Keep binary searching until the result is within this percentage
+ SAVE          | 0       | Queue recommended max_velocity to `[printer]` (run `SAVE_CONFIG` to apply)
 
 #### AUTO_SPEED_VALIDATE
  `AUTO_SPEED_VALIDATE` validates a specified acceleration/velocity, using [Ellis' TEST_SPEED Pattern](https://github.com/AndrewEllis93/Print-Tuning-Guide/blob/main/macros/TEST_SPEED.cfg)
