@@ -39,6 +39,12 @@ class AttemptWrapper:
         self.accel: float = 0.0
         self.veloc: float = 0.0
         self.scv: float = 0
+        # When True, test moves use the axis' full usable travel instead of a
+        # velocity-derived (shrinking) distance. Needed for coupled accel search
+        # so high-accel attempts stay stressful and the cruise velocity is reached.
+        self.full_dist: bool = False
+        # Largest searched value that actually passed (None if nothing passed).
+        self.valid_max: float = None
         
         self.home_steps: float = None
         

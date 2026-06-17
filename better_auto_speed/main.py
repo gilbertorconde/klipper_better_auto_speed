@@ -348,6 +348,8 @@ class BetterAutoSpeed:
         self.gcode.respond_info(respond)
 
         start = perf_counter()
+        # measured[axis][i] holds the max passing accel at velocs[i], or None if
+        # no accel in range passed (that velocity is infeasible on that axis).
         measured = {axis: [] for axis in axes}
         for axis in axes:
             for veloc in velocs:
@@ -358,22 +360,32 @@ class BetterAutoSpeed:
                 aw.margin = margin
                 aw.veloc = veloc
                 aw.scv = scv
+                # Use a full-travel move so the toolhead truly reaches `veloc` and
+                # high-accel attempts stay stressful (otherwise accel pegs at max).
+                aw.full_dist = True
                 self.init_axis(aw, axis)
                 aw.min, aw.max = self._resolve_accel_bounds(gcmd, aw.move.max_dist, veloc)
                 self.gcode.respond_info(
                     f"BETTER AUTO SPEED coupling {axis.upper().replace('_', ' ')} - "
                     f"v{veloc:.0f} (accel {aw.min:.0f} - {aw.max:.0f})")
-                measured[axis].append(self.binary_search(aw))
+                self.binary_search(aw)
+                measured[axis].append(aw.valid_max)
 
         # Conservative combine: the accel safe on every tested axis at a given
-        # velocity is the minimum measured across axes.
-        combined = [min(measured[axis][i] for axis in axes)
-                    for i in range(len(velocs))]
+        # velocity is the minimum measured across axes. A velocity is feasible
+        # only if every axis found a passing accel for it.
+        combined = []
+        for i in range(len(velocs)):
+            vals = [measured[axis][i] for axis in axes]
+            combined.append(None if any(v is None for v in vals) else min(vals))
 
         best_i = None
         best_t = None
         respond = f"BETTER AUTO SPEED coupling results after {perf_counter() - start:.2f}s\n"
         for i, veloc in enumerate(velocs):
+            if combined[i] is None:
+                respond += f"| v{veloc:.0f} -> infeasible (no passing accel)\n"
+                continue
             rec_a = combined[i] * derate
             rec_v = veloc * derate
             t = calculate_move_time(rec_a, rec_v, min_dist)
@@ -382,6 +394,13 @@ class BetterAutoSpeed:
                 best_i = i
             respond += (f"| v{veloc:.0f} -> max accel {combined[i]:.0f}"
                         f" | move time {t * 1000:.1f}ms\n")
+
+        if best_i is None:
+            respond += ("No feasible accel/velocity pair found. Try lowering "
+                        "VELOCITY_MAX/ACCEL_MAX or increasing MAX_MISSED.")
+            self.gcode.respond_info(respond)
+            return
+
         respond += (f"Best pair: accel {combined[best_i] * derate:.0f},"
                     f" velocity {velocs[best_i] * derate:.0f}"
                     f" (move time {best_t * 1000:.1f}ms over {min_dist:.0f}mm)")
@@ -798,22 +817,27 @@ class BetterAutoSpeed:
         if aw.accel == 0.0:
             aw.accel = 1.0
 
+        # Force full-travel test moves (coupled accel search) so the move stays
+        # long as accel rises and the toolhead actually reaches the cruise velocity.
+        fd = aw.move.max_dist if aw.full_dist else None
+
         if aw.type in ("accel", "graph"): # stat is velocity, var is accel
             m_stat = aw.veloc
             o_veloc = aw.veloc
             if o_veloc == 1.0:
                 aw.accel = calculate_accel(aw.veloc, aw.move.max_dist)
-            aw.move.Calc(self.axis_limits, m_stat, m_var, aw.margin)
+            aw.move.Calc(self.axis_limits, m_stat, m_var, aw.margin, fd)
 
         elif aw.type in ("velocity"): # stat is accel, var is velocity
             m_stat = aw.accel
             o_accel = aw.accel
             if o_accel == 1.0:
                 aw.veloc = calculate_velocity(aw.accel, aw.move.max_dist)
-            aw.move.Calc(self.axis_limits, m_var, m_stat, aw.margin)
+            aw.move.Calc(self.axis_limits, m_var, m_stat, aw.margin, fd)
 
         measuring = True
         measured_val = None
+        aw.valid_max = None
         aw.tries = 0
         aw.home_steps, aw.move_time_prehome = self._prehome(aw.move.home)
         while measuring:
@@ -822,12 +846,12 @@ class BetterAutoSpeed:
                 if o_veloc == 1.0:
                     m_stat = aw.veloc = calculate_velocity(m_var, aw.move.dist)/2.5
                 aw.accel = m_var
-                aw.move.Calc(self.axis_limits, m_stat, m_var, aw.margin)
+                aw.move.Calc(self.axis_limits, m_stat, m_var, aw.margin, fd)
             elif aw.type == "velocity":
                 if o_accel == 1.0:
                     m_stat = aw.accel = calculate_accel(m_var, aw.move.dist)*2.5
                 aw.veloc = m_var
-                aw.move.Calc(self.axis_limits, m_var, m_stat, aw.margin)
+                aw.move.Calc(self.axis_limits, m_var, m_stat, aw.margin, fd)
             #self.gcode.respond_info(str(aw))
 
             valid = self._attempt(aw)
@@ -854,6 +878,8 @@ class BetterAutoSpeed:
             measured_val = m_var
             if valid:
                 m_min = m_var
+                if aw.valid_max is None or m_var > aw.valid_max:
+                    aw.valid_max = m_var
             else:
                 m_max = m_var
             m_var = (m_min + m_max)//2

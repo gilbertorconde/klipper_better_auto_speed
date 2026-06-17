@@ -38,7 +38,7 @@ class Move:
 
     def Init(self, axis_limits, margin):
         ...
-    def Calc(self, axis_limits, veloc, accel, margin):
+    def Calc(self, axis_limits, veloc, accel, margin, dist=None):
         ...
 
 class MoveX(Move):
@@ -46,9 +46,9 @@ class MoveX(Move):
         home_y = not isolate_xy 
         self.home = [True, home_y, False]
         self.max_dist = axis_limits["x"]["dist"] - margin*2
-    def Calc(self, axis_limits, veloc, accel, margin):
+    def Calc(self, axis_limits, veloc, accel, margin, dist=None):
         self._calc(axis_limits, veloc, accel, margin)
-        self.dist = calculate_distance(veloc, accel)/2
+        self.dist = dist if dist is not None else calculate_distance(veloc, accel)/2
         self._validate(margin)
         self.pos = {
             "x": [
@@ -64,9 +64,9 @@ class MoveY(Move):
         home_x = not isolate_xy 
         self.home = [home_x, True, False]
         self.max_dist = axis_limits["y"]["dist"] - margin*2
-    def Calc(self, axis_limits, veloc, accel, margin):
+    def Calc(self, axis_limits, veloc, accel, margin, dist=None):
         self._calc(axis_limits, veloc, accel, margin)
-        self.dist = calculate_distance(veloc, accel)/2
+        self.dist = dist if dist is not None else calculate_distance(veloc, accel)/2
         self._validate(margin)
         self.pos = {
             "x": [None, None],
@@ -81,9 +81,9 @@ class MoveDiagX(Move):
     home = [True, True, False]
     def Init(self, axis_limits, margin, _):
         self.max_dist = min(axis_limits["x"]["dist"], axis_limits["y"]["dist"]) - margin*2
-    def Calc(self, axis_limits, veloc, accel, margin):
+    def Calc(self, axis_limits, veloc, accel, margin, dist=None):
         self._calc(axis_limits, veloc, accel, margin)
-        self.dist = (calculate_distance(veloc, accel)/2 * math.sin(45))
+        self.dist = dist if dist is not None else (calculate_distance(veloc, accel)/2 * math.sin(45))
         self._validate(margin)
         self.pos = {
             "x": [
@@ -101,9 +101,9 @@ class MoveDiagY(Move):
     home = [True, True, False]
     def Init(self, axis_limits, margin, _):
         self.max_dist = min(axis_limits["x"]["dist"], axis_limits["y"]["dist"]) - margin*2
-    def Calc(self, axis_limits, veloc, accel, margin):
+    def Calc(self, axis_limits, veloc, accel, margin, dist=None):
         self._calc(axis_limits, veloc, accel, margin)
-        self.dist = (calculate_distance(veloc, accel)/2 * math.sin(45))
+        self.dist = dist if dist is not None else (calculate_distance(veloc, accel)/2 * math.sin(45))
         self._validate(margin)
         self.pos = {
             "x": [
@@ -121,8 +121,8 @@ class MoveZ(Move):
     home = [False, False, True]
     def Init(self, axis_limits, margin, _):
         self.max_dist = axis_limits["z"]["dist"] - margin*2
-    def Calc(self, axis_limits, veloc, accel, margin):
-        self.dist = (calculate_distance(veloc, accel))
+    def Calc(self, axis_limits, veloc, accel, margin, dist=None):
+        self.dist = dist if dist is not None else calculate_distance(veloc, accel)
         self._validate(margin)
         self.pos = {
             "x": [None, None],
