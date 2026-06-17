@@ -8,7 +8,7 @@ import os
 from time import perf_counter
 import datetime as dt
 
-from .funcs import calculate_graph, calculate_accel, calculate_velocity
+from .funcs import calculate_graph, calculate_accel, calculate_velocity, calculate_move_time
 from .move import Move, MoveX, MoveY, MoveZ, MoveDiagX, MoveDiagY
 from .wrappers import ResultsWrapper, AttemptWrapper
 
@@ -210,6 +210,14 @@ class BetterAutoSpeed:
 
         validate = gcmd.get_int('VALIDATE', 0, minval=0, maxval=1)
         save = gcmd.get_int('SAVE', 0, minval=0, maxval=1)
+        couple = gcmd.get_int('COUPLE', 0, minval=0, maxval=1)
+
+        # Coupling inputs: hold one quantity fixed and find the other.
+        # VELOC is an alias for VELOCITY at this level.
+        accel_in = gcmd.get_float('ACCEL', None, above=1.0)
+        veloc_in = gcmd.get_float('VELOC', None, above=1.0)
+        if veloc_in is None:
+            veloc_in = gcmd.get_float('VELOCITY', None, above=1.0)
 
         # Apply current/homing-speed overrides once here, and neutralize the
         # related params so nested sub-calls don't re-apply or re-save.
@@ -226,35 +234,144 @@ class BetterAutoSpeed:
             if move_z is not None:
                 self._move([None, None, move_z], self.th_veloc)
 
-            start = perf_counter()
-            accel_results = self.cmd_BETTER_AUTO_SPEED_ACCEL(gcmd)
-            veloc_results = self.cmd_BETTER_AUTO_SPEED_VELOCITY(gcmd)
+            if couple:
+                # Sweep velocities, measure max accel at each, and recommend the
+                # best combined pair for this printer (highest throughput).
+                self._couple_sweep(gcmd, save, validate)
+            elif accel_in is not None and veloc_in is not None:
+                # Both supplied: nothing to search, report/save/validate the pair.
+                self._finalize_pair(gcmd, accel_in, veloc_in, save, validate)
+            elif accel_in is not None:
+                # Fixed accel -> find the velocity that works with it.
+                veloc_results = self.cmd_BETTER_AUTO_SPEED_VELOCITY(gcmd)
+                self._finalize_pair(gcmd, accel_in, veloc_results.vals['rec'], save, validate)
+            elif veloc_in is not None:
+                # Fixed velocity -> find the accel that works with it. The accel
+                # search holds the value passed as VELOCITY.
+                gcmd._params["VELOCITY"] = veloc_in
+                accel_results = self.cmd_BETTER_AUTO_SPEED_ACCEL(gcmd)
+                self._finalize_pair(gcmd, accel_results.vals['rec'], veloc_in, save, validate)
+            else:
+                start = perf_counter()
+                accel_results = self.cmd_BETTER_AUTO_SPEED_ACCEL(gcmd)
+                veloc_results = self.cmd_BETTER_AUTO_SPEED_VELOCITY(gcmd)
 
-            respond = f"BETTER AUTO SPEED found recommended acceleration and velocity after {perf_counter() - start:.2f}s\n"
-            for axis in self.valid_axes:
-                aR = accel_results.vals.get(axis, None)
-                vR = veloc_results.vals.get(axis, None)
-                if aR is not None or vR is not None:
-                    respond += f"| {axis.replace('_', ' ').upper()} max:"
-                    if aR is not None:
-                        respond += f" a{aR:.0f}"
-                    if vR is not None:
-                        respond += f" v{vR:.0f}"
-                    respond += "\n"
+                respond = f"BETTER AUTO SPEED found recommended acceleration and velocity after {perf_counter() - start:.2f}s\n"
+                for axis in self.valid_axes:
+                    aR = accel_results.vals.get(axis, None)
+                    vR = veloc_results.vals.get(axis, None)
+                    if aR is not None or vR is not None:
+                        respond += f"| {axis.replace('_', ' ').upper()} max:"
+                        if aR is not None:
+                            respond += f" a{aR:.0f}"
+                        if vR is not None:
+                            respond += f" v{vR:.0f}"
+                        respond += "\n"
 
-            respond += f"Recommended accel: {accel_results.vals['rec']:.0f}\n"
-            respond += f"Recommended velocity: {veloc_results.vals['rec']:.0f}\n"
-            self.gcode.respond_info(respond)
+                respond += f"Recommended accel: {accel_results.vals['rec']:.0f}\n"
+                respond += f"Recommended velocity: {veloc_results.vals['rec']:.0f}\n"
+                self.gcode.respond_info(respond)
 
-            if save:
-                self._save_to_config(gcmd, accel=accel_results.vals['rec'], velocity=veloc_results.vals['rec'])
+                if save:
+                    self._save_to_config(gcmd, accel=accel_results.vals['rec'], velocity=veloc_results.vals['rec'])
 
-            if validate:
-                gcmd._params["ACCEL"] = accel_results.vals['rec']
-                gcmd._params["VELOCITY"] = veloc_results.vals['rec']
-                self.cmd_BETTER_AUTO_SPEED_VALIDATE(gcmd)
+                if validate:
+                    gcmd._params["ACCEL"] = accel_results.vals['rec']
+                    gcmd._params["VELOCITY"] = veloc_results.vals['rec']
+                    self.cmd_BETTER_AUTO_SPEED_VALIDATE(gcmd)
         finally:
             self._restore_overrides(override_state)
+
+    def _finalize_pair(self, gcmd, accel, velocity, save, validate):
+        # Report a coupled accel/velocity pair, then optionally save/validate it.
+        respond = "BETTER AUTO SPEED coupled accel/velocity\n"
+        respond += f"Recommended accel: {accel:.0f}\n"
+        respond += f"Recommended velocity: {velocity:.0f}\n"
+        self.gcode.respond_info(respond)
+        if save:
+            self._save_to_config(gcmd, accel=accel, velocity=velocity)
+        if validate:
+            gcmd._params["ACCEL"] = accel
+            gcmd._params["VELOCITY"] = velocity
+            self.cmd_BETTER_AUTO_SPEED_VALIDATE(gcmd)
+
+    def _couple_sweep(self, gcmd, save, validate):
+        # Sweep a set of cruise velocities, measure the max accel that passes at
+        # each (per axis), combine conservatively across axes, then pick the pair
+        # that minimizes the time of a representative move sized to the printer.
+        axes = self._parse_axis(gcmd.get("AXIS", self._axis_to_str(self.axes)))
+
+        margin     = gcmd.get_float("MARGIN", self.margin, above=0.0)
+        derate     = gcmd.get_float('DERATE', self.derate, above=0.0, below=1.0)
+        max_missed = gcmd.get_float('MAX_MISSED', self.max_missed, above=0.0)
+        accel_accu = gcmd.get_float('ACCEL_ACCU', self.accel_accu, above=0.0, below=1.0)
+        scv        = gcmd.get_float('SCV', self.scv, above=1.0)
+        veloc_div  = gcmd.get_int('VELOCITY_DIV', 5, minval=2)
+
+        # Representative move distance and velocity bounds come from the most
+        # constraining (shortest-travel) axis, so the pair is safe everywhere.
+        dists = {}
+        for axis in axes:
+            probe = AttemptWrapper()
+            probe.margin = margin
+            self.init_axis(probe, axis)
+            dists[axis] = probe.move.max_dist
+        min_dist = min(dists.values())
+
+        accel_ceiling = (gcmd.get_float('ACCEL_MAX', None, above=1.0)
+                         or self._cfg_accel_max or 100000.0)
+        veloc_min, veloc_max = self._resolve_veloc_bounds(gcmd, min_dist, accel_ceiling)
+        veloc_step = (veloc_max - veloc_min) / (veloc_div - 1)
+        velocs = [round((v * veloc_step) + veloc_min) for v in range(veloc_div)]
+
+        respond = "BETTER AUTO SPEED coupling accel/velocity on"
+        for axis in axes:
+            respond += f" {axis.upper().replace('_', ' ')},"
+        respond = respond[:-1] + f"\nSweeping velocities {velocs}"
+        self.gcode.respond_info(respond)
+
+        start = perf_counter()
+        measured = {axis: [] for axis in axes}
+        for axis in axes:
+            for veloc in velocs:
+                aw = AttemptWrapper()
+                aw.type = "accel"
+                aw.accuracy = accel_accu
+                aw.max_missed = max_missed
+                aw.margin = margin
+                aw.veloc = veloc
+                aw.scv = scv
+                self.init_axis(aw, axis)
+                aw.min, aw.max = self._resolve_accel_bounds(gcmd, aw.move.max_dist, veloc)
+                self.gcode.respond_info(
+                    f"BETTER AUTO SPEED coupling {axis.upper().replace('_', ' ')} - "
+                    f"v{veloc:.0f} (accel {aw.min:.0f} - {aw.max:.0f})")
+                measured[axis].append(self.binary_search(aw))
+
+        # Conservative combine: the accel safe on every tested axis at a given
+        # velocity is the minimum measured across axes.
+        combined = [min(measured[axis][i] for axis in axes)
+                    for i in range(len(velocs))]
+
+        best_i = None
+        best_t = None
+        respond = f"BETTER AUTO SPEED coupling results after {perf_counter() - start:.2f}s\n"
+        for i, veloc in enumerate(velocs):
+            rec_a = combined[i] * derate
+            rec_v = veloc * derate
+            t = calculate_move_time(rec_a, rec_v, min_dist)
+            if best_t is None or t < best_t:
+                best_t = t
+                best_i = i
+            respond += (f"| v{veloc:.0f} -> max accel {combined[i]:.0f}"
+                        f" | move time {t * 1000:.1f}ms\n")
+        respond += (f"Best pair: accel {combined[best_i] * derate:.0f},"
+                    f" velocity {velocs[best_i] * derate:.0f}"
+                    f" (move time {best_t * 1000:.1f}ms over {min_dist:.0f}mm)")
+        self.gcode.respond_info(respond)
+
+        self._finalize_pair(gcmd, combined[best_i] * derate,
+                            velocs[best_i] * derate, save, validate)
 
     cmd_BETTER_AUTO_SPEED_ACCEL_help = ("Automatically find your printer's maximum acceleration")
     def cmd_BETTER_AUTO_SPEED_ACCEL(self, gcmd):
