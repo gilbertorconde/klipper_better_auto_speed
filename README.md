@@ -82,7 +82,7 @@ This project is a branched, independently-maintained continuation of the origina
 ## Roadmap
 
 - [ ] Export printer results as a 'benchmark' to a database to see average speeds for different printers
-- [ ] Make \_ACCEL/\_VELOCITY smarter, based on printer size
+- [x] Make \_ACCEL/\_VELOCITY smarter, based on printer size
 - [ ] Add support for running through moonraker (enables scripting different commands, arguments)
 - [x] Save validated/measured results to printer config (like SAVE_CONFIG)
 - [ ] Couple ACCEL/VELOCITY similar to BETTER_AUTO_SPEED_GRAPH
