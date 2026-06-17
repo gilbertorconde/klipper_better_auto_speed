@@ -12,7 +12,7 @@ from .funcs import calculate_graph, calculate_accel, calculate_velocity
 from .move import Move, MoveX, MoveY, MoveZ, MoveDiagX, MoveDiagY
 from .wrappers import ResultsWrapper, AttemptWrapper
 
-class AutoSpeed:
+class BetterAutoSpeed:
     def __init__(self, config):
         self.config = config
         self.printer = config.get_printer()
@@ -70,30 +70,30 @@ class AutoSpeed:
         self.printer.register_event_handler("klippy:connect", self.handle_connect)
         self.printer.register_event_handler("homing:home_rails_end", self.handle_home_rails_end)
 
-        self.gcode.register_command('AUTO_SPEED',
-                                    self.cmd_AUTO_SPEED,
-                                    desc=self.cmd_AUTO_SPEED_help)
-        self.gcode.register_command('AUTO_SPEED_VELOCITY',
-                                    self.cmd_AUTO_SPEED_VELOCITY,
-                                    desc=self.cmd_AUTO_SPEED_VELOCITY_help)
-        self.gcode.register_command('AUTO_SPEED_ACCEL',
-                                    self.cmd_AUTO_SPEED_ACCEL,
-                                    desc=self.cmd_AUTO_SPEED_ACCEL_help)
-        self.gcode.register_command('AUTO_SPEED_VALIDATE',
-                                    self.cmd_AUTO_SPEED_VALIDATE,
-                                    desc=self.cmd_AUTO_SPEED_VALIDATE_help)
-        self.gcode.register_command('AUTO_SPEED_GRAPH',
-                                    self.cmd_AUTO_SPEED_GRAPH,
-                                    desc=self.cmd_AUTO_SPEED_GRAPH_help)
+        self.gcode.register_command('BETTER_AUTO_SPEED',
+                                    self.cmd_BETTER_AUTO_SPEED,
+                                    desc=self.cmd_BETTER_AUTO_SPEED_help)
+        self.gcode.register_command('BETTER_AUTO_SPEED_VELOCITY',
+                                    self.cmd_BETTER_AUTO_SPEED_VELOCITY,
+                                    desc=self.cmd_BETTER_AUTO_SPEED_VELOCITY_help)
+        self.gcode.register_command('BETTER_AUTO_SPEED_ACCEL',
+                                    self.cmd_BETTER_AUTO_SPEED_ACCEL,
+                                    desc=self.cmd_BETTER_AUTO_SPEED_ACCEL_help)
+        self.gcode.register_command('BETTER_AUTO_SPEED_VALIDATE',
+                                    self.cmd_BETTER_AUTO_SPEED_VALIDATE,
+                                    desc=self.cmd_BETTER_AUTO_SPEED_VALIDATE_help)
+        self.gcode.register_command('BETTER_AUTO_SPEED_GRAPH',
+                                    self.cmd_BETTER_AUTO_SPEED_GRAPH,
+                                    desc=self.cmd_BETTER_AUTO_SPEED_GRAPH_help)
         self.gcode.register_command('X_ENDSTOP_ACCURACY',
                                     self.cmd_X_ENDSTOP_ACCURACY,
-                                    desc=self.cmd_AUTO_SPEED_GRAPH_help)
+                                    desc=self.cmd_BETTER_AUTO_SPEED_GRAPH_help)
         self.gcode.register_command('Y_ENDSTOP_ACCURACY',
                                     self.cmd_Y_ENDSTOP_ACCURACY,
-                                    desc=self.cmd_AUTO_SPEED_GRAPH_help)
+                                    desc=self.cmd_BETTER_AUTO_SPEED_GRAPH_help)
         self.gcode.register_command('Z_ENDSTOP_ACCURACY',
                                     self.cmd_Z_ENDSTOP_ACCURACY,
-                                    desc=self.cmd_AUTO_SPEED_GRAPH_help)
+                                    desc=self.cmd_BETTER_AUTO_SPEED_GRAPH_help)
 
         self.level = None
 
@@ -201,11 +201,11 @@ class AutoSpeed:
             saved.append(f"max_velocity={round(velocity)}")
         if saved:
             self.gcode.respond_info(
-                "AUTO SPEED queued to [printer]: " + ", ".join(saved) +
+                "BETTER AUTO SPEED queued to [printer]: " + ", ".join(saved) +
                 "\nRun SAVE_CONFIG to apply (this rewrites printer.cfg and restarts Klipper).")
 
-    cmd_AUTO_SPEED_help = ("Automatically find your printer's maximum acceleration/velocity")
-    def cmd_AUTO_SPEED(self, gcmd):
+    cmd_BETTER_AUTO_SPEED_help = ("Automatically find your printer's maximum acceleration/velocity")
+    def cmd_BETTER_AUTO_SPEED(self, gcmd):
         self._check_homed(gcmd)
 
         validate = gcmd.get_int('VALIDATE', 0, minval=0, maxval=1)
@@ -227,10 +227,10 @@ class AutoSpeed:
                 self._move([None, None, move_z], self.th_veloc)
 
             start = perf_counter()
-            accel_results = self.cmd_AUTO_SPEED_ACCEL(gcmd)
-            veloc_results = self.cmd_AUTO_SPEED_VELOCITY(gcmd)
+            accel_results = self.cmd_BETTER_AUTO_SPEED_ACCEL(gcmd)
+            veloc_results = self.cmd_BETTER_AUTO_SPEED_VELOCITY(gcmd)
 
-            respond = f"AUTO SPEED found recommended acceleration and velocity after {perf_counter() - start:.2f}s\n"
+            respond = f"BETTER AUTO SPEED found recommended acceleration and velocity after {perf_counter() - start:.2f}s\n"
             for axis in self.valid_axes:
                 aR = accel_results.vals.get(axis, None)
                 vR = veloc_results.vals.get(axis, None)
@@ -252,12 +252,12 @@ class AutoSpeed:
             if validate:
                 gcmd._params["ACCEL"] = accel_results.vals['rec']
                 gcmd._params["VELOCITY"] = veloc_results.vals['rec']
-                self.cmd_AUTO_SPEED_VALIDATE(gcmd)
+                self.cmd_BETTER_AUTO_SPEED_VALIDATE(gcmd)
         finally:
             self._restore_overrides(override_state)
 
-    cmd_AUTO_SPEED_ACCEL_help = ("Automatically find your printer's maximum acceleration")
-    def cmd_AUTO_SPEED_ACCEL(self, gcmd):
+    cmd_BETTER_AUTO_SPEED_ACCEL_help = ("Automatically find your printer's maximum acceleration")
+    def cmd_BETTER_AUTO_SPEED_ACCEL(self, gcmd):
         self._check_homed(gcmd)
         override_state = self._apply_overrides(gcmd)
         try:
@@ -273,7 +273,7 @@ class AutoSpeed:
             veloc_stat = veloc if veloc != 1.0 else None
             scv =   gcmd.get_float('SCV', self.scv, above=1.0)
 
-            respond = "AUTO SPEED finding maximum acceleration on"
+            respond = "BETTER AUTO SPEED finding maximum acceleration on"
             for axis in axes:
                 respond += f" {axis.upper().replace('_', ' ')},"
             self.gcode.respond_info(respond[:-1])
@@ -292,13 +292,13 @@ class AutoSpeed:
                 self.init_axis(aw, axis)
                 aw.min, aw.max = self._resolve_accel_bounds(gcmd, aw.move.max_dist, veloc_stat)
                 self.gcode.respond_info(
-                    f"AUTO SPEED accel range on {axis.upper().replace('_', ' ')}: "
+                    f"BETTER AUTO SPEED accel range on {axis.upper().replace('_', ' ')}: "
                     f"{aw.min:.0f} - {aw.max:.0f}")
                 rw.vals[aw.axis] = self.binary_search(aw)
             rw.duration = perf_counter() - start
 
             rw.name = "acceleration"
-            respond = f"AUTO SPEED found maximum acceleration after {rw.duration:.2f}s\n"
+            respond = f"BETTER AUTO SPEED found maximum acceleration after {rw.duration:.2f}s\n"
             for axis in self.valid_axes:
                 if rw.vals.get(axis, None) is not None:
                     respond += f"| {axis.replace('_', ' ').upper()} max: {rw.vals[axis]:.0f}\n"
@@ -319,8 +319,8 @@ class AutoSpeed:
         finally:
             self._restore_overrides(override_state)
 
-    cmd_AUTO_SPEED_VELOCITY_help = ("Automatically find your printer's maximum velocity")
-    def cmd_AUTO_SPEED_VELOCITY(self, gcmd):
+    cmd_BETTER_AUTO_SPEED_VELOCITY_help = ("Automatically find your printer's maximum velocity")
+    def cmd_BETTER_AUTO_SPEED_VELOCITY(self, gcmd):
         self._check_homed(gcmd)
         override_state = self._apply_overrides(gcmd)
         try:
@@ -339,7 +339,7 @@ class AutoSpeed:
                 gcmd.get_float('ACCEL_MAX', None, above=1.0) or self._cfg_accel_max or 100000.0)
             scv =   gcmd.get_float('SCV', self.scv, above=1.0)
 
-            respond = "AUTO SPEED finding maximum velocity on"
+            respond = "BETTER AUTO SPEED finding maximum velocity on"
             for axis in axes:
                 respond += f" {axis.upper().replace('_', ' ')},"
             self.gcode.respond_info(respond[:-1])
@@ -358,13 +358,13 @@ class AutoSpeed:
                 self.init_axis(aw, axis)
                 aw.min, aw.max = self._resolve_veloc_bounds(gcmd, aw.move.max_dist, accel_ceiling)
                 self.gcode.respond_info(
-                    f"AUTO SPEED velocity range on {axis.upper().replace('_', ' ')}: "
+                    f"BETTER AUTO SPEED velocity range on {axis.upper().replace('_', ' ')}: "
                     f"{aw.min:.0f} - {aw.max:.0f}")
                 rw.vals[aw.axis] = self.binary_search(aw)
             rw.duration = perf_counter() - start
 
             rw.name = "velocity"
-            respond = f"AUTO SPEED found maximum velocity after {rw.duration:.2f}s\n"
+            respond = f"BETTER AUTO SPEED found maximum velocity after {rw.duration:.2f}s\n"
             for axis in self.valid_axes:
                 if rw.vals.get(axis, None) is not None:
                     respond += f"| {axis.replace('_', ' ').upper()} max: {rw.vals[axis]:.0f}\n"
@@ -385,8 +385,8 @@ class AutoSpeed:
         finally:
             self._restore_overrides(override_state)
 
-    cmd_AUTO_SPEED_VALIDATE_help = ("Validate your printer's acceleration/velocity don't miss steps")
-    def cmd_AUTO_SPEED_VALIDATE(self, gcmd):
+    cmd_BETTER_AUTO_SPEED_VALIDATE_help = ("Validate your printer's acceleration/velocity don't miss steps")
+    def cmd_BETTER_AUTO_SPEED_VALIDATE(self, gcmd):
         self._check_homed(gcmd)
         override_state = self._apply_overrides(gcmd)
         try:
@@ -399,7 +399,7 @@ class AutoSpeed:
             veloc = gcmd.get_float('VELOCITY', default=self.toolhead.max_velocity, above=0.0)
             scv =   gcmd.get_float('SCV', default=self.toolhead.square_corner_velocity, above=1.0)
 
-            respond = f"AUTO SPEED validating over {iterations} iterations\n"
+            respond = f"BETTER AUTO SPEED validating over {iterations} iterations\n"
             respond += f"Acceleration: {accel:.0f}\n"
             respond += f"Velocity: {veloc:.0f}\n"
             respond += f"SCV: {scv:.0f}"
@@ -407,7 +407,7 @@ class AutoSpeed:
             self._set_velocity(veloc, accel, scv)
             valid, duration, missed_x, missed_y = self._validate(veloc, iterations, margin, small_margin, max_missed)
 
-            respond = f"AUTO SPEED validated results after {duration:.2f}s\n"
+            respond = f"BETTER AUTO SPEED validated results after {duration:.2f}s\n"
             respond += f"Valid: {valid}\n"
             respond += f"Missed X {missed_x:.2f}, Y {missed_y:.2f}"
             self.gcode.respond_info(respond)
@@ -415,8 +415,8 @@ class AutoSpeed:
         finally:
             self._restore_overrides(override_state)
 
-    cmd_AUTO_SPEED_GRAPH_help = ("Graph your printer's maximum acceleration at given velocities")
-    def cmd_AUTO_SPEED_GRAPH(self, gcmd):
+    cmd_BETTER_AUTO_SPEED_GRAPH_help = ("Graph your printer's maximum acceleration at given velocities")
+    def cmd_BETTER_AUTO_SPEED_GRAPH(self, gcmd):
         import matplotlib.pyplot as plt # this may fail if matplotlib isn't installed
         self._check_homed(gcmd)
         axes = self._parse_axis(gcmd.get("AXIS", self._axis_to_str(self.axes)))
@@ -438,7 +438,7 @@ class AutoSpeed:
 
         veloc_step = (veloc_max - veloc_min)//(veloc_div - 1)
         velocs = [round((v * veloc_step) + veloc_min) for v in range(0, veloc_div)]
-        respond = "AUTO SPEED graphing maximum accel from velocities on"
+        respond = "BETTER AUTO SPEED graphing maximum accel from velocities on"
         for axis in axes:
             respond += f" {axis.upper().replace('_', ' ')},"
         respond = respond[:-1] + "\n"
@@ -458,7 +458,7 @@ class AutoSpeed:
             accel_mins = []
             accel_maxs = []
             for veloc in velocs:
-                self.gcode.respond_info(f"AUTO SPEED graph {aw.axis} - v{veloc}")
+                self.gcode.respond_info(f"BETTER AUTO SPEED graph {aw.axis} - v{veloc}")
                 aw.veloc = veloc
                 aw.min = round(calculate_graph(veloc, accel_min_slope))
                 aw.max = round(calculate_graph(veloc, accel_max_slope))
@@ -475,11 +475,11 @@ class AutoSpeed:
             plt.ylabel("Acceleration")
             filepath = os.path.join(
                 self.results_dir,
-                f"AUTO_SPEED_GRAPH_{dt.datetime.now():%Y-%m-%d_%H:%M:%S}_{aw.axis}.png"
+                f"BETTER_AUTO_SPEED_GRAPH_{dt.datetime.now():%Y-%m-%d_%H:%M:%S}_{aw.axis}.png"
             )
             self.gcode.respond_info(f"Velocs: {velocs}")
             self.gcode.respond_info(f"Accels: {accels}")
-            self.gcode.respond_info(f"AUTO SPEED graph found max accel on {aw.axis} after {perf_counter() - start:.0f}s\nSaving graph to {filepath}")
+            self.gcode.respond_info(f"BETTER AUTO SPEED graph found max accel on {aw.axis} after {perf_counter() - start:.0f}s\nSaving graph to {filepath}")
             os.makedirs(self.results_dir, exist_ok=True)
             plt.savefig(filepath, bbox_inches='tight')
             plt.close()
@@ -524,7 +524,7 @@ class AutoSpeed:
             raise gcmd.error(f"Unknown leveling method '{self.level}'.")
         lm = self.printer.lookup_object(lookup)
         if lm.z_status.applied is False:
-            self.gcode.respond_info(f"AUTO SPEED leveling with {name}...")
+            self.gcode.respond_info(f"BETTER AUTO SPEED leveling with {name}...")
             self.gcode._process_commands([name], False)
             if lm.z_status.applied is False:
                 raise gcmd.error(f"Failed to level printer! Please manually ensure your printer is level.")
@@ -540,7 +540,7 @@ class AutoSpeed:
         if variance == 0:
             return
 
-        self.gcode.respond_info(f"AUTO SPEED checking endstop variance over {endstop_samples} samples")
+        self.gcode.respond_info(f"BETTER AUTO SPEED checking endstop variance over {endstop_samples} samples")
 
         if settling_home:
             self.toolhead.wait_moves()
@@ -556,7 +556,7 @@ class AutoSpeed:
 
         x_max = max(endstops["x"]) if check_x else 0
         y_max = max(endstops["y"]) if check_y else 0
-        self.gcode.respond_info(f"AUTO SPEED endstop variance:\nMissed X:{x_max:.2f} steps, Y:{y_max:.2f} steps")
+        self.gcode.respond_info(f"BETTER AUTO SPEED endstop variance:\nMissed X:{x_max:.2f} steps, Y:{y_max:.2f} steps")
 
         if x_max >= max_missed or y_max >= max_missed:
             raise gcmd.error(f"Please increase MAX_MISSED (currently {max_missed}), or tune your steppers/homing macro.")
@@ -668,7 +668,7 @@ class AutoSpeed:
             elif aw.type in ("velocity"):
                 veloc = m_var
                 accel = m_stat
-            respond = f"AUTO SPEED {aw.type} on {aw.axis} try {aw.tries} ({aw.time_last:.2f}s)\n"
+            respond = f"BETTER AUTO SPEED {aw.type} on {aw.axis} try {aw.tries} ({aw.time_last:.2f}s)\n"
             respond += f"Moved {aw.move_dist - aw.margin:.2f}mm at a{accel:.0f}/v{veloc:.0f} after {aw.move_time_prehome:.2f}/{aw.move_time:.2f}/{aw.move_time_posthome:.2f}s\n"
             respond += f"Missed"
             if aw.move.home[0]:
@@ -874,7 +874,7 @@ class AutoSpeed:
         return valid, stop_steps, missed, dur
 
     def _set_velocity(self, velocity: float, accel: float, scv: float):
-        #self.gcode.respond_info(f"AUTO SPEED setting limits to VELOCITY={velocity} ACCEL={accel}")
+        #self.gcode.respond_info(f"BETTER AUTO SPEED setting limits to VELOCITY={velocity} ACCEL={accel}")
         self.toolhead.max_velocity = velocity
         self.toolhead.max_accel = accel
         self.toolhead.requested_accel_to_decel = accel
@@ -924,7 +924,7 @@ class AutoSpeed:
         if self._xy_coupled():
             if xc is not None and yc is not None and abs(xc - yc) > 1e-9:
                 self.gcode.respond_info(
-                    "AUTO SPEED warning: CoreXY A/B motors normally share current; "
+                    "BETTER AUTO SPEED warning: CoreXY A/B motors normally share current; "
                     "applying X_CURRENT to stepper_x and Y_CURRENT to stepper_y as given")
                 current_by_axis["x"], current_by_axis["y"] = xc, yc
             else:
@@ -943,7 +943,7 @@ class AutoSpeed:
             for name in self._axis_stepper_names(axis):
                 tmc = self._find_tmc(name)
                 if tmc is None:
-                    self.gcode.respond_info(f"AUTO SPEED: no TMC driver for {name}, skipping current")
+                    self.gcode.respond_info(f"BETTER AUTO SPEED: no TMC driver for {name}, skipping current")
                     continue
                 orig = tmc.get_status(self.printer.get_reactor().monotonic())["run_current"]
                 state["currents"].append((name, orig))
@@ -963,7 +963,7 @@ class AutoSpeed:
 
         if not state["currents"] and not state["rails"]:
             return None
-        self.gcode.respond_info("AUTO SPEED applied overrides: " + ", ".join(applied))
+        self.gcode.respond_info("BETTER AUTO SPEED applied overrides: " + ", ".join(applied))
         return state
 
     def _restore_overrides(self, state):
