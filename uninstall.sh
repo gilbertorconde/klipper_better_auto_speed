@@ -2,6 +2,7 @@
 # Remove better_auto_speed from your Klipper installation
 #
 # Copyright (C) 2024 Anonoei <dev@anonoei.com>
+# Copyright (C) 2026 gilbertorconde (https://github.com/gilbertorconde) - Better Auto Speed fork
 #
 # This file may be distributed under the terms of the MIT license.
 
