@@ -17,6 +17,9 @@ def render_graph(results_dir, axis, accel_accu, velocs, accels, accel_mins, acce
     matplotlib.use('Agg')      # headless: render straight to a file, no display
     import matplotlib.pyplot as plt
 
+    # An infeasible velocity is a gap, never a zero or interpolated success.
+    accels = [float('nan') if a is None else a for a in accels]
+    plt.figure()
     plt.plot(velocs, accels, 'go-', label='measured')
     plt.plot(velocs, [a*derate for a in accels], 'g-', label='derated')
     plt.plot(velocs, accel_mins, 'b--', label='min')

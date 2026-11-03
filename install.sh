@@ -1,52 +1,53 @@
 #!/bin/bash
-# automatically calculate your printer's maximum acceleration/velocity
-#
-# Copyright (C) 2024 Anonoei <dev@anonoei.com>
-# Copyright (C) 2026 gilbertorconde (https://github.com/gilbertorconde) - Better Auto Speed fork
-#
-# This file may be distributed under the terms of the MIT license.
+# Install links without restarting a printer unless explicitly requested.
+set -euo pipefail
 
-# Force script to exit if an error occurs
-set -e
+SRCDIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+KLIPPER_PATH="${KLIPPER_PATH:-${HOME}/klipper}"
+KLIPPY_ENV="${KLIPPY_ENV:-${HOME}/klippy-env}"
+KLIPPER_SERVICE="${KLIPPER_SERVICE:-}"
+EXTRA_PATH="${KLIPPER_PATH}/klippy/extras/better_auto_speed"
 
-KLIPPER_PATH="${HOME}/klipper"
-SYSTEMDDIR="/etc/systemd/system"
-SRCDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )"/ && pwd )"
-
-# Verify we're running as root
-if [ "$(id -u)" -eq 0 ]; then
-    echo "This script must not run as root"
-    exit -1
+if [[ "${1:-}" == --help ]]; then
+    echo 'Usage: [KLIPPER_PATH=...] [KLIPPY_ENV=...] [KLIPPER_SERVICE=klipper.service] [INSTALL_PLOTTING=1] ./install.sh'
+    echo 'No service is restarted by default. INSTALL_PLOTTING=1 installs optional matplotlib.'
+    exit 0
 fi
+[[ $# == 0 ]] || { echo 'Unknown argument; use --help' >&2; exit 1; }
+[[ -d "${KLIPPER_PATH}/klippy/extras" ]] || { echo 'Klipper extras directory not found' >&2; exit 1; }
+[[ -x "${KLIPPY_ENV}/bin/python" ]] || { echo 'Klipper Python environment not found' >&2; exit 1; }
+[[ -z "$KLIPPER_SERVICE" || "$KLIPPER_SERVICE" =~ ^klipper(-[a-zA-Z0-9_-]+)?\.service$ ]] || {
+    echo 'KLIPPER_SERVICE must name one klipper service' >&2; exit 1;
+}
+"${KLIPPY_ENV}/bin/python" -c 'import sys; assert sys.version_info >= (3, 8), "Python 3.8+ is required"'
 
-# Check if Klipper is installed. Match the default klipper.service as well as
-# multi-instance units like klipper-<name>.service.
-KLIPPER_SERVICES="$(sudo systemctl list-units --full -all -t service --no-legend \
-    | grep -oE 'klipper(-[^. ]+)?\.service' | sort -u)"
-if [ -n "${KLIPPER_SERVICES}" ]; then
-    echo "Klipper service(s) found: $(echo ${KLIPPER_SERVICES} | tr '\n' ' ')"
+# Keep manual directory-symlink installations intact; reject unrelated targets.
+if [[ -L "$EXTRA_PATH" ]]; then
+    [[ "$(readlink -f -- "$EXTRA_PATH")" == "$SRCDIR/better_auto_speed" ]] || {
+        echo "Refusing to replace unrelated symlink: $EXTRA_PATH" >&2; exit 1;
+    }
 else
-    echo "Klipper service not found, please install Klipper first"
-    exit -1
+    # Preflight every destination before changing any link.
+    for source in "$SRCDIR"/better_auto_speed/*.py; do
+        target="$EXTRA_PATH/$(basename -- "$source")"
+        if [[ -e "$target" || -L "$target" ]]; then
+            [[ -L "$target" && "$(readlink -- "$target")" == "$source" ]] || {
+                echo "Refusing to overwrite unrelated file: $target" >&2; exit 1;
+            }
+        fi
+    done
+    mkdir -p -- "$EXTRA_PATH"
+    for source in "$SRCDIR"/better_auto_speed/*.py; do
+        ln -sfn -- "$source" "$EXTRA_PATH/$(basename -- "$source")"
+    done
 fi
 
-# Check for old python
-~/klippy-env/bin/python -c 'import sys; assert sys.version_info[0] == 3, "Python 3 is required."'
-
-# Link better auto speed to klipper
-echo "Linking better_auto_speed to Klipper..."
-mkdir -p "${KLIPPER_PATH}/klippy/extras/better_auto_speed"
-for file in `ls better_auto_speed/*.py`; do
-    ln -sf "${SRCDIR}/${file}" "${KLIPPER_PATH}/klippy/extras/${file}"
-done
-
-# Install matplotlib
-echo "Installing matplotlib in klippy..."
-~/klippy-env/bin/python -m pip install matplotlib
-
-# Restart klipper (every detected instance)
-echo "Restarting Klipper..."
-for service in ${KLIPPER_SERVICES}; do
-    echo "  restarting ${service}"
-    sudo systemctl restart "${service}"
-done
+if [[ "${INSTALL_PLOTTING:-0}" == 1 ]]; then
+    "${KLIPPY_ENV}/bin/python" -m pip install matplotlib
+fi
+if [[ -n "$KLIPPER_SERVICE" ]]; then
+    echo "Restarting explicitly selected service: $KLIPPER_SERVICE"
+    systemctl restart "$KLIPPER_SERVICE"
+else
+    echo 'Installed. Restart your selected Klipper service manually when the printer is idle.'
+fi

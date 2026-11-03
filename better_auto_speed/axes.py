@@ -9,10 +9,17 @@
 
 
 def parse_axis(raw_axes, valid_axes):
-    raw_axes = raw_axes.lower()
-    raw_axes = raw_axes.replace(" ", "")
-    raw_axes = raw_axes.split(',')
-    return [axis for axis in raw_axes if axis in valid_axes]
+    axes = [axis.strip().lower() for axis in raw_axes.split(',')]
+    if not axes or any(axis not in valid_axes for axis in axes):
+        raise ValueError("AXIS must be a nonempty comma-separated selection of: "
+                         + ", ".join(valid_axes))
+    return list(dict.fromkeys(axes))
+
+
+SUPPORTED_KINEMATICS = frozenset((
+    'cartesian', 'corexy', 'corexz', 'hybrid_corexy', 'hybrid_corexz',
+    'markforged', 'markforged_kinematics',
+))
 
 
 def axis_to_str(axes):
