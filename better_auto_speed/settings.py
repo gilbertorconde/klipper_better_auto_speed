@@ -8,8 +8,9 @@
 # Parsed, immutable-ish view of the [better_auto_speed] config section.
 
 import os
+from math import isfinite
 
-from .axes import parse_axis
+from .axes import parse_axis, SUPPORTED_KINEMATICS
 
 
 class Settings:
@@ -21,16 +22,22 @@ class Settings:
         printer = config.get_printer()
 
         self.printer_kinematics = config.getsection("printer").get("kinematics")
+        if self.printer_kinematics not in SUPPORTED_KINEMATICS:
+            raise config.error('Unsupported kinematics for better_auto_speed: '
+                               + self.printer_kinematics)
         self.isolate_xy = self.printer_kinematics in ('cartesian', 'corexz')
 
         self.valid_axes = ["x", "y", "diag_x", "diag_y", "z"]
-        self.axes = parse_axis(
-            config.get('axis', 'x, y' if self.isolate_xy else 'diag_x, diag_y'),
-            self.valid_axes)
+        try:
+            self.axes = parse_axis(
+                config.get('axis', 'x, y' if self.isolate_xy else 'diag_x, diag_y'),
+                self.valid_axes)
+        except ValueError as exc:
+            raise config.error(str(exc))
 
         self.margin          = config.getfloat(  'margin',          default=20.0, above=0.0)
         self.settling_home   = config.getboolean('settling_home',   default=True)
-        self.max_missed      = config.getfloat(  'max_missed',      default=1.0)
+        self.max_missed      = config.getfloat(  'max_missed',      default=1.0, above=0.0)
         self.endstop_samples = config.getint(    'endstop_samples', default=3, minval=2)
 
         # None sentinel lets us tell "explicitly configured" from "absent" so
@@ -59,6 +66,15 @@ class Settings:
         self.validate_margin       = config.getfloat('validate_margin', default=self.margin, above=0.0)
         self.validate_inner_margin = config.getfloat('validate_inner_margin', default=20.0, above=0.0)
         self.validate_iterations   = config.getint(  'validate_iterations', default=50, minval=1)
+
+        for name, value in vars(self).items():
+            if isinstance(value, float) and not isfinite(value):
+                raise config.error(f'{name} must be finite')
+        for name, low, high in (
+                ('accel', self.cfg_accel_min, self.cfg_accel_max),
+                ('velocity', self.cfg_veloc_min, self.cfg_veloc_max)):
+            if low is not None and high is not None and low >= high:
+                raise config.error(f'{name}_min must be below {name}_max')
 
         results_default = os.path.expanduser('~')
         candidate_paths = [os.path.expanduser('~/printer_data/config')]

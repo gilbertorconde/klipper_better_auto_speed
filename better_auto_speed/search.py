@@ -8,6 +8,7 @@
 # Per-axis speed search: bounds resolution, the binary search loop, and the
 # single measured attempt that drives it.
 
+import math
 from time import perf_counter
 
 from .funcs import calculate_accel, calculate_velocity
@@ -21,120 +22,128 @@ class SpeedSearch:
         self.motion = motion
         self.settings = settings
 
+    @staticmethod
+    def _validate_bounds(lower, upper):
+        if not all(math.isfinite(v) and v > 0 for v in (lower, upper)) or lower > upper:
+            raise ValueError("search bounds must be finite, positive, and ordered")
+
     def resolve_accel_bounds(self, gcmd, max_dist, veloc_stat):
-        accel_max = (gcmd.get_float('ACCEL_MAX', None, above=1.0)
-                     or self.settings.cfg_accel_max or 100000.0)
-        # The size floor is only meaningful with a fixed companion velocity:
-        # the lowest accel must still let the move fit the available travel.
-        size_min = calculate_accel(veloc_stat, max_dist) if veloc_stat else None
-        accel_min = (gcmd.get_float('ACCEL_MIN', None, above=1.0)
-                     or self.settings.cfg_accel_min or size_min or 1000.0)
-        accel_min = max(1.0, min(accel_min, accel_max - 1.0))
-        return accel_min, accel_max
+        # Validate travel even for an automatic companion velocity.
+        calculate_velocity(1.0, max_dist)
+        upper = gcmd.get_float('ACCEL_MAX', None, above=1.0)
+        if upper is None:
+            upper = self.settings.cfg_accel_max
+        if upper is None:
+            upper = 100000.0
+        floor = calculate_accel(veloc_stat, max_dist) if veloc_stat is not None else None
+        lower = gcmd.get_float('ACCEL_MIN', None, above=1.0)
+        if lower is None:
+            lower = self.settings.cfg_accel_min
+        if lower is None:
+            lower = floor if floor is not None else 1000.0
+        if floor is not None and lower == floor and lower > upper and math.isclose(lower, upper, rel_tol=1e-12):
+            lower = upper  # sqrt/square roundoff at the reachable ceiling
+        self._validate_bounds(lower, upper)
+        if floor is not None and lower < floor and not math.isclose(lower, floor, rel_tol=1e-12):
+            raise ValueError("ACCEL_MIN cannot reach the fixed velocity within usable travel")
+        return lower, upper
 
     def resolve_veloc_bounds(self, gcmd, max_dist, accel_max):
-        size_max = calculate_velocity(accel_max, max_dist)  # sqrt(accel_max * D)
-        veloc_max = (gcmd.get_float('VELOCITY_MAX', None, above=1.0)
-                     or self.settings.cfg_veloc_max or size_max)
-        veloc_min = (gcmd.get_float('VELOCITY_MIN', None, above=1.0)
-                     or self.settings.cfg_veloc_min or 50.0)
-        veloc_min = max(1.0, min(veloc_min, veloc_max - 1.0))
-        return veloc_min, veloc_max
+        ceiling = calculate_velocity(accel_max, max_dist)
+        upper = gcmd.get_float('VELOCITY_MAX', None, above=1.0)
+        if upper is None:
+            upper = self.settings.cfg_veloc_max
+        if upper is None:
+            upper = ceiling
+        lower = gcmd.get_float('VELOCITY_MIN', None, above=1.0)
+        if lower is None:
+            lower = self.settings.cfg_veloc_min
+        if lower is None:
+            lower = min(50.0, upper)
+        self._validate_bounds(lower, upper)
+        if upper > ceiling and not math.isclose(upper, ceiling, rel_tol=1e-12):
+            raise ValueError("VELOCITY_MAX is unreachable within usable travel")
+        return lower, upper
 
     def init_axis(self, aw: AttemptWrapper, axis):
+        moves = {"x": MoveX, "y": MoveY, "z": MoveZ,
+                 "diag_x": MoveDiagX, "diag_y": MoveDiagY}
+        if axis not in moves:
+            raise ValueError(f"unsupported search axis: {axis}")
         aw.axis = axis
-        if axis == "diag_x":
-            aw.move = MoveDiagX()
-        elif axis == "diag_y":
-            aw.move = MoveDiagY()
-        elif axis == "x":
-            aw.move = MoveX()
-        elif axis == "y":
-            aw.move = MoveY()
-        elif axis == "z":
-            aw.move = MoveZ()
+        aw.move = moves[axis]()
         aw.move.Init(self.machine.axis_limits, aw.margin, self.settings.isolate_xy)
 
     def binary_search(self, aw: AttemptWrapper):
+        """Return the highest tested pass, or None (monotonic pass/fail assumed).
+
+        Test both bounds before bisecting. Limit the number of bisections even
+        for subnormal accuracy, and stop when floating-point progress ends.
+        Companion values 0 and 1 retain their legacy automatic-mode meaning.
+        """
         aw.time_start = perf_counter()
-        m_min = aw.min
-        m_max = aw.max
-        m_var = m_min + (m_max-m_min) // 3
-
-        if aw.veloc == 0.0:
-            aw.veloc = 1.0
-        if aw.accel == 0.0:
-            aw.accel = 1.0
-
-        # Force full-travel test moves (coupled accel search) so the move stays
-        # long as accel rises and the toolhead actually reaches the cruise velocity.
-        fd = aw.move.max_dist if aw.full_dist else None
-
-        if aw.type in ("accel", "graph"): # stat is velocity, var is accel
-            m_stat = aw.veloc
-            o_veloc = aw.veloc
-            if o_veloc == 1.0:
-                aw.accel = calculate_accel(aw.veloc, aw.move.max_dist)
-            aw.move.Calc(self.machine.axis_limits, m_stat, m_var, aw.margin, fd)
-
-        elif aw.type in ("velocity"): # stat is accel, var is velocity
-            m_stat = aw.accel
-            o_accel = aw.accel
-            if o_accel == 1.0:
-                aw.veloc = calculate_velocity(aw.accel, aw.move.max_dist)
-            aw.move.Calc(self.machine.axis_limits, m_var, m_stat, aw.margin, fd)
-
-        measuring = True
-        measured_val = None
         aw.valid_max = None
         aw.tries = 0
-        aw.home_steps, aw.move_time_prehome = self.motion.prehome(aw.move.home)
-        while measuring:
-            aw.tries += 1
-            if aw.type in ("accel", "graph"):
-                if o_veloc == 1.0:
-                    m_stat = aw.veloc = calculate_velocity(m_var, aw.move.dist)/2.5
-                aw.accel = m_var
-                aw.move.Calc(self.machine.axis_limits, m_stat, m_var, aw.margin, fd)
-            elif aw.type == "velocity":
-                if o_accel == 1.0:
-                    m_stat = aw.accel = calculate_accel(m_var, aw.move.dist)*2.5
-                aw.veloc = m_var
-                aw.move.Calc(self.machine.axis_limits, m_var, m_stat, aw.margin, fd)
-            #self.gcode.respond_info(str(aw))
+        self._validate_bounds(aw.min, aw.max)
+        if not math.isfinite(aw.accuracy) or not 0 < aw.accuracy < 1:
+            raise ValueError("search accuracy must be finite and between zero and one")
+        if aw.type not in ("accel", "graph", "velocity"):
+            raise ValueError(f"unsupported search type: {aw.type}")
+        accel_search = aw.type in ("accel", "graph")
+        companion = aw.veloc if accel_search else aw.accel
+        automatic = companion in (0.0, 1.0)
+        fd = aw.move.max_dist if aw.full_dist else None
 
-            valid = self.attempt(aw)
-
-            if aw.type in ("accel", "graph"):
-                veloc = m_stat
-                accel = m_var
-            elif aw.type in ("velocity"):
-                veloc = m_var
-                accel = m_stat
-            respond = f"BETTER AUTO SPEED {aw.type} on {aw.axis} try {aw.tries} ({aw.time_last:.2f}s)\n"
-            respond += f"Moved {aw.move_dist - aw.margin:.2f}mm at a{accel:.0f}/v{veloc:.0f} after {aw.move_time_prehome:.2f}/{aw.move_time:.2f}/{aw.move_time_posthome:.2f}s\n"
-            respond += f"Missed"
-            if aw.move.home[0]:
-                respond += f" X {aw.missed['x']:.2f},"
-            if aw.move.home[1]:
-                respond += f" Y {aw.missed['y']:.2f},"
-            if aw.move.home[2]:
-                respond += f" Z {aw.missed['z']:.2f},"
-            self.machine.gcode.respond_info(respond[:-1])
-            if measured_val is not None:
-                if m_var * (1 + aw.accuracy) > m_max or m_var * (1 - aw.accuracy) < m_min:
-                    measuring = False
-            measured_val = m_var
-            if valid:
-                m_min = m_var
-                if aw.valid_max is None or m_var > aw.valid_max:
-                    aw.valid_max = m_var
+        def prepare(value):
+            if accel_search:
+                aw.accel = value
+                aw.veloc = (calculate_velocity(value, aw.move.max_dist) / 2.5
+                            if automatic else companion)
             else:
-                m_max = m_var
-            m_var = (m_min + m_max)//2
+                aw.veloc = value
+                aw.accel = (calculate_accel(value, aw.move.max_dist)
+                            if automatic else companion)
+            aw.move.Calc(self.machine.axis_limits, aw.veloc, aw.accel, aw.margin, fd)
 
-        aw.time_total = perf_counter() - aw.time_start
-        return m_var
+        # Reject an unreachable range before any homing or measured motion.
+        prepare(aw.max)
+        prepare(aw.min)
+        aw.home_steps, aw.move_time_prehome = self.motion.prehome(aw.move.home)
+
+        def measure(value):
+            prepare(value)
+            aw.tries += 1
+            valid = self.attempt(aw)
+            if valid:
+                aw.valid_max = value if aw.valid_max is None else max(value, aw.valid_max)
+            missed = ", ".join(f"{axis.upper()} {aw.missed[axis]:.2f}"
+                               for axis, home in zip(('x', 'y', 'z'), aw.move.home) if home)
+            self.machine.gcode.respond_info(
+                f"BETTER AUTO SPEED {aw.type} on {aw.axis} try {aw.tries} ({aw.time_last:.2f}s)\n"
+                f"Moved {aw.move_dist:.2f}mm at a{aw.accel:.0f}/v{aw.veloc:.0f} "
+                f"after {aw.move_time_prehome:.2f}/{aw.move_time:.2f}/{aw.move_time_posthome:.2f}s\n"
+                f"Missed {missed}")
+            return valid
+
+        try:
+            lower, upper = aw.min, aw.max
+            if not measure(lower) or lower == upper:
+                return aw.valid_max
+            if measure(upper):
+                return aw.valid_max
+            for _ in range(64):
+                if upper - lower <= aw.accuracy * lower:
+                    break
+                midpoint = lower + (upper - lower) / 2.0
+                if not lower < midpoint < upper:
+                    break
+                if measure(midpoint):
+                    lower = midpoint
+                else:
+                    upper = midpoint
+            return aw.valid_max
+        finally:
+            aw.time_total = perf_counter() - aw.time_start
 
     def attempt(self, aw: AttemptWrapper):
         timeAttempt = perf_counter()

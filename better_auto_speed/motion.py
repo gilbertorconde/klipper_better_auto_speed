@@ -32,13 +32,19 @@ class MotionController:
         if hasattr(toolhead, '_calc_junction_deviation'):
             toolhead._calc_junction_deviation()
 
-    def restore_velocity_limits(self):
-        # Put the user's minimum-cruise-ratio back after a run.
+    def capture_velocity_limits(self):
+        """Snapshot runtime limits, including Klipper's derived legacy fields."""
         toolhead = self.machine.toolhead
-        if self.machine.th_min_cruise_ratio is not None and hasattr(toolhead, 'min_cruise_ratio'):
-            toolhead.min_cruise_ratio = self.machine.th_min_cruise_ratio
-            if hasattr(toolhead, '_calc_junction_deviation'):
-                toolhead._calc_junction_deviation()
+        names = ('max_velocity', 'max_accel', 'square_corner_velocity',
+                 'min_cruise_ratio', 'requested_accel_to_decel',
+                 'max_accel_to_decel', 'accel_to_decel', 'junction_deviation')
+        return {name: getattr(toolhead, name) for name in names
+                if hasattr(toolhead, name)}
+
+    def restore_velocity_limits(self, state):
+        # Restore derived values too: recalculation can clamp legacy limits.
+        for name, value in state.items():
+            setattr(self.machine.toolhead, name, value)
 
     def move(self, coord, speed):
         self.machine.toolhead.manual_move(coord, speed)
@@ -51,11 +57,10 @@ class MotionController:
         return speed
 
     def home(self, x=True, y=True, z=True):
+        if not any((x, y, z)):
+            return  # Bare G28 would unexpectedly home every axis.
         toolhead = self.machine.toolhead
-        prevAccel = toolhead.max_accel
-        prevVeloc = toolhead.max_velocity
-        prevScv   = toolhead.square_corner_velocity
-        self.set_velocity(self.machine.th_veloc, self.machine.th_accel, self.machine.th_scv)
+        state = self.capture_velocity_limits()
         command = ["G28"]
         if x:
             command[-1] += " X0"
@@ -63,9 +68,12 @@ class MotionController:
             command[-1] += " Y0"
         if z:
             command[-1] += " Z0"
-        self.machine.gcode.run_script_from_command(command[0])
-        toolhead.wait_moves()
-        self.set_velocity(prevVeloc, prevAccel, prevScv)
+        try:
+            self.set_velocity(self.machine.th_veloc, self.machine.th_accel, self.machine.th_scv)
+            self.machine.gcode.run_script_from_command(command[0])
+            toolhead.wait_moves()
+        finally:
+            self.restore_velocity_limits(state)
 
     def prehome(self, home: list):
         self.machine.toolhead.wait_moves()
@@ -214,8 +222,8 @@ class MotionController:
         lookup = None
         name = None
         if self.machine.level == "STA":
-            lookup = "screw_tilt_adjust"
-            name = "SCREWS_TILT_CALCULATE"
+            raise gcmd.error("screws_tilt_adjust is manual; level the bed manually "
+                             "and use LEVEL=0.")
         elif self.machine.level == "ZT":
             lookup = "z_tilt"
             name = "Z_TILT_ADJUST"
@@ -224,9 +232,12 @@ class MotionController:
             name = "QUAD_GANTRY_LEVEL"
         else:
             raise gcmd.error(f"Unknown leveling method '{self.machine.level}'.")
-        lm = self.machine.printer.lookup_object(lookup)
-        if lm.z_status.applied is False:
+        lm = self.machine.printer.lookup_object(lookup, None)
+        status = getattr(lm, 'z_status', None)
+        if not isinstance(getattr(status, 'applied', None), bool):
+            raise gcmd.error(f"Unsupported leveling status API for {lookup}.")
+        if not status.applied:
             self.machine.gcode.respond_info(f"BETTER AUTO SPEED leveling with {name}...")
             self.machine.gcode.run_script_from_command(name)
-            if lm.z_status.applied is False:
+            if not status.applied:
                 raise gcmd.error(f"Failed to level printer! Please manually ensure your printer is level.")

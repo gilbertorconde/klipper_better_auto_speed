@@ -55,12 +55,7 @@ class BetterAutoSpeed:
                                desc=c.cmd_BETTER_AUTO_SPEED_GRAPH_help)
 
         e = self.endstop
-        gcode.register_command('X_ENDSTOP_ACCURACY',
-                               e.cmd_X_ENDSTOP_ACCURACY,
-                               desc=c.cmd_BETTER_AUTO_SPEED_GRAPH_help)
-        gcode.register_command('Y_ENDSTOP_ACCURACY',
-                               e.cmd_Y_ENDSTOP_ACCURACY,
-                               desc=c.cmd_BETTER_AUTO_SPEED_GRAPH_help)
-        gcode.register_command('Z_ENDSTOP_ACCURACY',
-                               e.cmd_Z_ENDSTOP_ACCURACY,
-                               desc=c.cmd_BETTER_AUTO_SPEED_GRAPH_help)
+        for axis in 'XYZ':
+            name = f'{axis}_ENDSTOP_ACCURACY'
+            gcode.register_command(name, getattr(e, f'cmd_{name}'),
+                                   desc=getattr(e, f'cmd_{name}_help'))

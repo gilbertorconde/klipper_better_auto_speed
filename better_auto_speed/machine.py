@@ -41,12 +41,12 @@ class Machine:
         self.th_min_cruise_ratio = getattr(self.toolhead, 'min_cruise_ratio', None)
 
         # Find and define leveling method
-        if self.printer.lookup_object("screw_tilt_adjust", None) is not None:
-            self.level = "STA"
-        elif self.printer.lookup_object("z_tilt", None) is not None:
+        if self.printer.lookup_object("z_tilt", None) is not None:
             self.level = "ZT"
         elif self.printer.lookup_object("quad_gantry_level", None) is not None:
             self.level = "QGL"
+        elif self.printer.lookup_object("screws_tilt_adjust", None) is not None:
+            self.level = "STA"
         else:
             self.level = None
 

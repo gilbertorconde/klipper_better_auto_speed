@@ -7,14 +7,30 @@
 
 import math
 
+def _positive_finite(*values):
+    if any(not math.isfinite(value) or value <= 0 for value in values):
+        raise ValueError("motion values must be finite and positive")
+
+
 def calculate_velocity(accel: float, travel: float):
-    return math.sqrt(travel/accel)*accel
+    _positive_finite(accel, travel)
+    result = math.sqrt(travel) * math.sqrt(accel)
+    _positive_finite(result)
+    return result
+
 
 def calculate_accel(veloc: float, travel: float):
-    return veloc**2/travel
+    _positive_finite(veloc, travel)
+    result = (veloc / travel) * veloc
+    _positive_finite(result)
+    return result
+
 
 def calculate_distance(veloc: float, accel: float):
-    return veloc**2/accel
+    _positive_finite(veloc, accel)
+    result = (veloc / accel) * veloc
+    _positive_finite(result)
+    return result
 
 def calculate_diagonal(x: float, y: float):
     return math.sqrt(x**2 + y**2)
