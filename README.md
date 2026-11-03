@@ -28,9 +28,9 @@ I run `BETTER_AUTO_SPEED MAX_MISSED=10.0` to account for that variance, and occa
 
 **This module is under development**, and has only been validated on CoreXY printers: You may run into issues or bugs, feel free to post an issue on this repository.
 
-Your printer shouldn't have any crashes due to the movement patterns used, and re-homing before/after each test, so it's safe to walk away and let it do it's thing.
+**Supervise every calibration run.** These tests deliberately approach missed-step limits. Re-homing and bounded movement do not guarantee collision-free operation after a stall, homing failure, or mechanical fault. Clear the build area and be ready to stop the printer.
 
-Using Ellis' pattern (BETTER_AUTO_SPEED_VALIDATE) is **NOT** a safe movement pattern. Please ensure your toolhead isn't crashing before walking away.
+Ellis' pattern (`BETTER_AUTO_SPEED_VALIDATE`) also requires supervision. Never leave a stress test unattended.
 
 # Table of Contents
 
@@ -54,6 +54,24 @@ Using Ellis' pattern (BETTER_AUTO_SPEED_VALIDATE) is **NOT** a safe movement pat
 ## Overview
 
 - License: MIT
+
+### Calibration safeguards
+
+Search results use only actually tested, passing values. A search with no passing attempt does not produce a recommendation. Motion geometry uses stop-to-stop travel sufficient to reach the requested velocity; impossible bounds and margins must be corrected rather than silently clipped.
+
+When `VALIDATE=1`, settings are queued for `SAVE_CONFIG` only after validation succeeds. Without validation, recommendations remain unvalidated. Temporary motion limits and motor overrides are restored on success and failure; firmware shutdown or communication loss may still require a restart and inspection.
+
+### Development checks
+
+Tests use fake Klipper objects and do not move hardware. No third-party test runner is required:
+
+```sh
+python -m unittest discover -s tests -v
+bash -n install.sh uninstall.sh
+git diff --check
+```
+
+CI runs these checks across multiple Python versions. Passing unit tests is not a substitute for supervised testing on supported printer hardware.
 
 ## Credits
 
@@ -132,6 +150,14 @@ git clone https://github.com/gilbertorconde/klipper_auto_speed.git
 cd klipper_auto_speed
 ./install.sh
 ```
+
+The installer works from any working directory and does **not** restart services by default. Run it while the printer is idle. Custom installations can select their paths explicitly:
+
+```sh
+KLIPPER_PATH="$HOME/klipper" KLIPPY_ENV="$HOME/klippy-env" ./install.sh
+```
+
+Plotting is optional: set `INSTALL_PLOTTING=1` to install matplotlib. To request a restart of exactly one service, set `KLIPPER_SERVICE=klipper.service`; this requires systemd authorization. Otherwise restart that service manually when safe. The uninstaller removes only links belonging to this checkout and never restarts services or recursively deletes the extras directory.
 
 #### Manual installation
 
