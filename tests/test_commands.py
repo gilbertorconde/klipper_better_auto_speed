@@ -1,6 +1,10 @@
 """Command safety regression tests; no Klipper, matplotlib or hardware required."""
+import configparser
+import glob
 import math
+import os
 import sys
+import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -38,7 +42,72 @@ class Gcmd:
         return self._number(name, default, float, **bounds)
 
 
-class CommandTests(unittest.TestCase):
+AUTOSAVE_HEADER = """
+#*# <---------------------- SAVE_CONFIG ---------------------->
+#*# DO NOT EDIT THIS BLOCK OR BELOW. The contents are auto-generated.
+#*#
+"""
+
+
+class ConfigFileReader:
+    """Fake of Klipper's reader: includes resolve relative to the including file."""
+
+    def read_config_file(self, filename):
+        with open(filename) as f:
+            return f.read()
+
+    def build_fileconfig_with_includes(self, data, filename):
+        fileconfig = configparser.RawConfigParser(strict=False)
+        self._parse(data, filename, fileconfig)
+        return fileconfig
+
+    def _parse(self, data, filename, fileconfig):
+        buf = []
+        for line in data.split('\n'):
+            line = line.split('#', 1)[0]
+            if line.strip().startswith('[include '):
+                fileconfig.read_string('\n'.join(buf))
+                buf = []
+                spec = line.strip()[len('[include '):-1].strip()
+                for name in sorted(glob.glob(os.path.join(os.path.dirname(filename), spec))):
+                    self._parse(self.read_config_file(name), name, fileconfig)
+            else:
+                buf.append(line)
+        fileconfig.read_string('\n'.join(buf))
+
+
+class FakeAutosave:
+    def _find_autosave_data(self, data):
+        pos = data.find(AUTOSAVE_HEADER)
+        if pos < 0:
+            return data, ''
+        lines = data[pos + len(AUTOSAVE_HEADER):].split('\n')
+        return data[:pos], '\n'.join(line[4:] for line in lines)
+
+
+class FakeConfigFile:
+    """Klipper's printer 'configfile' object; its module provides ConfigFileReader."""
+
+    def __init__(self):
+        self.autosave = FakeAutosave()
+        self.set = Mock()
+
+
+class LegacyConfigFile:
+    """Older Klipper/Kalico: parsing helpers live on PrinterConfig itself."""
+
+    def __init__(self):
+        self.set = Mock()
+        self._reader = ConfigFileReader()
+        self._read_config_file = self._reader.read_config_file
+        self._find_autosave_data = FakeAutosave()._find_autosave_data
+
+    def _build_config_wrapper(self, data, filename):
+        return SimpleNamespace(
+            fileconfig=self._reader.build_fileconfig_with_includes(data, filename))
+
+
+class CommandTestBase(unittest.TestCase):
     def setUp(self):
         self.settings = SimpleNamespace(
             axes=['x', 'y'], valid_axes=['x', 'y', 'z', 'diag_x', 'diag_y'],
@@ -49,13 +118,18 @@ class CommandTests(unittest.TestCase):
             cfg_accel_min=None, cfg_accel_max=None, cfg_veloc_min=None,
             cfg_veloc_max=None, results_dir='/unused')
         self.gcode = Mock()
-        self.config = Mock()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.cfg_dir = self.tmp.name
+        self.printer_cfg = self.write_cfg('printer.cfg', '[printer]\nkinematics: cartesian\n')
+        self.config = FakeConfigFile()
         self.machine = SimpleNamespace(
             gcode=self.gcode, check_homed=Mock(), steppers={'x': [], 'y': [], 'z': []},
             toolhead=SimpleNamespace(max_accel=3000., max_velocity=200.),
             axis_limits={a: dict(min=0., max=300., center=150., dist=300., home=0.)
                          for a in 'xyz'}, th_veloc=100.,
-            printer=SimpleNamespace(lookup_object=lambda name: self.config),
+            printer=SimpleNamespace(lookup_object=lambda name: self.config,
+                                    get_start_args=lambda: {'config_file': self.printer_cfg}),
             z_uses_probe=lambda: False)
         self.motion = Mock()
         self.motion.capture_velocity_limits.return_value = {'entry': 'limits'}
@@ -73,9 +147,24 @@ class CommandTests(unittest.TestCase):
         self.commands = AutoSpeedCommands(self.machine, self.motion, self.search,
                                           self.overrides, self.settings)
 
+    def write_cfg(self, name, text):
+        path = os.path.join(self.cfg_dir, name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w') as f:
+            f.write(text)
+        return path
+
+    def queued(self):
+        return {c.args[1]: c.args[2] for c in self.config.set.call_args_list}
+
+    def responses(self):
+        return '\n'.join(str(c.args[0]) for c in self.gcode.respond_info.call_args_list)
+
     def run_command(self, suffix='', **params):
         return getattr(self.commands, 'cmd_BETTER_AUTO_SPEED' + suffix)(Gcmd(**params))
 
+
+class CommandTests(CommandTestBase):
     def test_invalid_input_precedes_hardware(self):
         cases = [dict(SAVE=2), dict(VALIDATE=2), dict(MOTOR_OFF='bad'),
                  dict(AXIS=''), dict(AXIS='x,unknown'), dict(AXIS='x,'),
@@ -147,7 +236,7 @@ class CommandTests(unittest.TestCase):
         for suffix, params in cases:
             for valid in (False, True):
                 with self.subTest(suffix=suffix, params=params, valid=valid):
-                    self.config.reset_mock()
+                    self.config.set.reset_mock()
                     self.motion.validate.return_value = (valid, .1, 0., 0.)
                     self.run_command(suffix, SAVE=1, VALIDATE=1, VARIANCE=0, **params)
                     self.assertEqual(self.config.set.called, valid)
@@ -232,3 +321,79 @@ class CommandTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class SaveConflictTests(CommandTestBase):
+    """SAVE must never queue a [printer] option SAVE_CONFIG would reject."""
+
+    def save(self, accel=8123.4, velocity=412.):
+        self.commands._save_to_config(Gcmd(), accel=accel, velocity=velocity)
+
+    def test_safe_options_are_queued(self):
+        # Only present in the autosave block (or nowhere): safe to queue.
+        self.write_cfg('printer.cfg', '[printer]\nkinematics: corexy\n' + AUTOSAVE_HEADER +
+                       '#*# [printer]\n#*# max_accel = 5000\n')
+        self.save()
+        self.assertEqual(self.queued(), {'max_accel': 8123, 'max_velocity': 412})
+        self.assertIn('Run SAVE_CONFIG', self.responses())
+        self.assertNotIn('did NOT queue', self.responses())
+
+    def test_defined_in_include_is_not_queued(self):
+        self.write_cfg('printer.cfg', '[include config/*.cfg]\n[better_auto_speed]\n')
+        include = self.write_cfg('config/kinematics.cfg',
+                                 '[printer]\nkinematics: corexy\nmax_accel: 5000\n')
+        self.save()
+        self.assertEqual(self.queued(), {'max_velocity': 412})
+        text = self.responses()
+        self.assertIn('did NOT queue max_accel', text)
+        self.assertIn(os.path.abspath(include), text)
+        self.assertIn('  max_accel: 8123\n', text)
+        self.assertNotIn('  max_velocity:', text)
+
+    def test_defined_in_main_body_is_queued(self):
+        # SAVE_CONFIG comments out main-body values itself, so this is safe.
+        self.write_cfg('printer.cfg', '[printer]\nkinematics: corexy\nmax_accel: 5000\n'
+                       'max_velocity: 300 # comment\n[include kin.cfg]\n')
+        self.write_cfg('kin.cfg', '[stepper_x]\nstep_pin: PA0\n')
+        self.save()
+        self.assertEqual(self.queued(), {'max_accel': 8123, 'max_velocity': 412})
+        self.assertIn('Run SAVE_CONFIG', self.responses())
+        self.assertNotIn('did NOT queue', self.responses())
+
+    def test_main_body_and_include_is_not_queued(self):
+        # The include still conflicts after SAVE_CONFIG drops the main-body line.
+        self.write_cfg('printer.cfg', '[printer]\nmax_accel: 5000\nmax_velocity: 300\n'
+                       '[include kin.cfg]\n')
+        include = self.write_cfg('kin.cfg', '[printer]\nmax_accel: 6000\n')
+        self.save()
+        self.assertEqual(self.queued(), {'max_velocity': 412})
+        text = self.responses()
+        self.assertIn('did NOT queue max_accel', text)
+        self.assertIn(f'Edit [printer] in {os.path.abspath(include)} by hand', text)
+        self.assertNotIn(os.path.abspath(self.printer_cfg), text)
+
+    def test_unreadable_config_is_never_queued(self):
+        os.unlink(self.printer_cfg)
+        self.save()
+        self.config.set.assert_not_called()
+        self.assertIn('could not check', self.responses())
+
+    def test_legacy_klipper_parser(self):
+        self.config = LegacyConfigFile()
+        self.write_cfg('printer.cfg', '[include kin.cfg]\n')
+        self.write_cfg('kin.cfg', '[printer]\nmax_velocity: 300\n')
+        self.save()
+        self.assertEqual(self.queued(), {'max_accel': 8123})
+
+    def test_every_save_path_honours_conflicts(self):
+        self.write_cfg('printer.cfg', '[include kin.cfg]\n')
+        self.write_cfg('kin.cfg', '[printer]\nmax_accel: 5000\nmax_velocity: 300\n')
+        cases = [('', dict(ACCEL=3000, VELOCITY=200)), ('', dict(COUPLE=0)),
+                 ('', dict(COUPLE=1)), ('_ACCEL', {}), ('_VELOCITY', {}),
+                 ('_VALIDATE', dict(SAVE=1))]
+        for suffix, params in cases:
+            with self.subTest(suffix=suffix, params=params):
+                self.gcode.respond_info.reset_mock()
+                self.run_command(suffix, VALIDATE=1, VARIANCE=0, **params)
+                self.config.set.assert_not_called()
+                self.assertIn('did NOT queue', self.responses())

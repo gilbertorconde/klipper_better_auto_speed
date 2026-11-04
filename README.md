@@ -12,7 +12,7 @@ _With one copy/paste and one line in your configuration, automatically optimize 
 >
 > This is an enhanced version of Klipper Auto Speed, built on top of the original project created by [Anonoei](https://github.com/Anonoei/klipper_auto_speed). Full credit for the original idea and implementation belongs to the original author.
 >
-> This is a **separate, branched project — not a fork intended to upstream changes back** to the original repository. It is maintained independently at [gilbertorconde/klipper_auto_speed](https://github.com/gilbertorconde/klipper_auto_speed) and layers additional features and fixes on top of the original.
+> This is a **separate, branched project — not a fork intended to upstream changes back** to the original repository. It is maintained independently at [gilbertorconde/klipper_better_auto_speed](https://github.com/gilbertorconde/klipper_better_auto_speed) and layers additional features and fixes on top of the original.
 >
 > Please direct installation and issues to **this** repository rather than the original.
 
@@ -22,7 +22,8 @@ Most of the testing time is waiting for your printer to home.
 On my printer with default settings (except MAX_MISSED), it takes ~3.5 minutes for acceleration, and ~5 minutes for velocity.
 
 **Sensorless homing**: If you're using sensorless homing `MAX_MISSED=1.0` is probably too low.
-The endstop variance check will tell you how many steps you lose when homing.
+Let the endstop variance check drive the value: it runs before every search (`VARIANCE=1`) and prints the most steps lost while homing (`Missed X:#.## steps, Y:#.## steps`), and the run stops if that reaches `MAX_MISSED`.
+Set `MAX_MISSED` comfortably above the worst value it reports.
 For instance, on my printer I lose around 0-4.2 steps each home.
 I run `BETTER_AUTO_SPEED MAX_MISSED=10.0` to account for that variance, and occasional wildly different endstop results.
 
@@ -34,22 +35,22 @@ Ellis' pattern (`BETTER_AUTO_SPEED_VALIDATE`) also requires supervision. Never l
 
 # Table of Contents
 
-- [Overview](https://github.com/gilbertorconde/klipper_auto_speed#overview)
-- [Credits](https://github.com/gilbertorconde/klipper_auto_speed#credits)
-- [Example Usage](https://github.com/gilbertorconde/klipper_auto_speed#example-usage)
-- [Roadmap](https://github.com/gilbertorconde/klipper_auto_speed#roadmap)
-- [How does it work](https://github.com/gilbertorconde/klipper_auto_speed#how-does-it-work)
-- [Using Better Auto Speed](https://github.com/gilbertorconde/klipper_auto_speed#using-better-auto-speed)
-  - [Installation](https://github.com/gilbertorconde/klipper_auto_speed#installation)
-    - [Moonraker Update Manager](https://github.com/gilbertorconde/klipper_auto_speed#moonraker-update-manager)
-  - [Configuration](https://github.com/gilbertorconde/klipper_auto_speed#configuration)
-  - [Macros](https://github.com/gilbertorconde/klipper_auto_speed#macro)
-    - [BETTER_AUTO_SPEED](https://github.com/gilbertorconde/klipper_auto_speed#better_auto_speed)
-    - [BETTER_AUTO_SPEED_ACCEL](https://github.com/gilbertorconde/klipper_auto_speed#better_auto_speed_accel)
-    - [BETTER_AUTO_SPEED_VELOCITY](https://github.com/gilbertorconde/klipper_auto_speed#better_auto_speed_velocity)
-    - [BETTER_AUTO_SPEED_VALIDATE](https://github.com/gilbertorconde/klipper_auto_speed#better_auto_speed_validate)
-    - [BETTER_AUTO_SPEED_GRAPH](https://github.com/gilbertorconde/klipper_auto_speed#better_auto_speed_graph)
-- [Console Output](https://github.com/gilbertorconde/klipper_auto_speed#console-output)
+- [Overview](https://github.com/gilbertorconde/klipper_better_auto_speed#overview)
+- [Credits](https://github.com/gilbertorconde/klipper_better_auto_speed#credits)
+- [Example Usage](https://github.com/gilbertorconde/klipper_better_auto_speed#example-usage)
+- [Roadmap](https://github.com/gilbertorconde/klipper_better_auto_speed#roadmap)
+- [How does it work](https://github.com/gilbertorconde/klipper_better_auto_speed#how-does-it-work)
+- [Using Better Auto Speed](https://github.com/gilbertorconde/klipper_better_auto_speed#using-better-auto-speed)
+  - [Installation](https://github.com/gilbertorconde/klipper_better_auto_speed#installation)
+    - [Moonraker Update Manager](https://github.com/gilbertorconde/klipper_better_auto_speed#moonraker-update-manager)
+  - [Configuration](https://github.com/gilbertorconde/klipper_better_auto_speed#configuration)
+  - [Macros](https://github.com/gilbertorconde/klipper_better_auto_speed#macro)
+    - [BETTER_AUTO_SPEED](https://github.com/gilbertorconde/klipper_better_auto_speed#better_auto_speed)
+    - [BETTER_AUTO_SPEED_ACCEL](https://github.com/gilbertorconde/klipper_better_auto_speed#better_auto_speed_accel)
+    - [BETTER_AUTO_SPEED_VELOCITY](https://github.com/gilbertorconde/klipper_better_auto_speed#better_auto_speed_velocity)
+    - [BETTER_AUTO_SPEED_VALIDATE](https://github.com/gilbertorconde/klipper_better_auto_speed#better_auto_speed_validate)
+    - [BETTER_AUTO_SPEED_GRAPH](https://github.com/gilbertorconde/klipper_better_auto_speed#better_auto_speed_graph)
+- [Console Output](https://github.com/gilbertorconde/klipper_better_auto_speed#console-output)
 
 ## Overview
 
@@ -85,7 +86,7 @@ This project is a branched, independently-maintained continuation of the origina
   - `BETTER_AUTO_SPEED COUPLE=0 SAVE=0`
 - Find maximum acceleration on y axis
   - `BETTER_AUTO_SPEED_ACCEL AXIS="y"`
-- Find maximum acceleration on y, then x axis
+- Find maximum velocity on y, then x axis
   - `BETTER_AUTO_SPEED_VELOCITY AXIS="y,x"`
 - Validate your printer's current accel/velocity (Ellis' test pattern)
   - `BETTER_AUTO_SPEED_VALIDATE`
@@ -128,26 +129,27 @@ This project is a branched, independently-maintained continuation of the origina
 ### Moonraker Update Manager
 
 ```
-[update_manager klipper_auto_speed]
+[update_manager klipper_better_auto_speed]
 type: git_repo
-path: ~/klipper_auto_speed
-origin: https://github.com/gilbertorconde/klipper_auto_speed.git
+path: ~/klipper_better_auto_speed
+origin: https://github.com/gilbertorconde/klipper_better_auto_speed.git
 primary_branch: main
-install_script: install.sh
 managed_services: klipper
 ```
+
+Moonraker does not run an `install_script` when it updates a `git_repo` (it only scans that script for system packages), so none is configured. Updates still work without re-running `install.sh`: the installer links the whole `better_auto_speed` directory into Klipper, so files added by an update are picked up automatically. Klipper must restart to load them; `managed_services: klipper` makes Moonraker do that after an update.
 
 ### Installation
 
 To install this module you need to clone the repository and run the `install.sh` script.
-**Depending on when you installed klipper, you may also need to [update your klippy-env python version.](https://github.com/gilbertorconde/klipper_auto_speed#update-klippy-env)**
+**Depending on when you installed klipper, you may also need to [update your klippy-env python version.](https://github.com/gilbertorconde/klipper_better_auto_speed#update-klippy-env)**
 
 #### Automatic installation
 
 ```
 cd ~
-git clone https://github.com/gilbertorconde/klipper_auto_speed.git
-cd klipper_auto_speed
+git clone https://github.com/gilbertorconde/klipper_better_auto_speed.git
+cd klipper_better_auto_speed
 ./install.sh
 ```
 
@@ -157,16 +159,18 @@ The installer works from any working directory and does **not** restart services
 KLIPPER_PATH="$HOME/klipper" KLIPPY_ENV="$HOME/klippy-env" ./install.sh
 ```
 
+The installer creates one directory link, `~/klipper/klippy/extras/better_auto_speed -> ~/klipper_better_auto_speed/better_auto_speed`. Earlier versions linked each `.py` file separately; re-running `./install.sh` once migrates that layout to the directory link (it refuses, and changes nothing, if that directory holds anything other than links into this checkout and `__pycache__`). With the directory link, updates that add new modules work without re-running `install.sh`; restart Klipper after any update so it loads them.
+
 Plotting is optional: set `INSTALL_PLOTTING=1` to install matplotlib. To request a restart of exactly one service, set `KLIPPER_SERVICE=klipper.service`; this requires systemd authorization. Otherwise restart that service manually when safe. The uninstaller removes only links belonging to this checkout and never restarts services or recursively deletes the extras directory.
 
 #### Manual installation
 
 1.  Clone the repository
     1. `cd ~`
-    2. `git clone https://github.com/gilbertorconde/klipper_auto_speed.git`
-    3. `cd klipper_auto_speed`
+    2. `git clone https://github.com/gilbertorconde/klipper_better_auto_speed.git`
+    3. `cd klipper_better_auto_speed`
 2.  Link better_auto_speed to klipper
-    1. `ln -sf ~/klipper_auto_speed/better_auto_speed ~/klipper/klippy/extras/better_auto_speed`
+    1. `ln -s ~/klipper_better_auto_speed/better_auto_speed ~/klipper/klippy/extras/better_auto_speed`
 3.  Install matplotlib
     1.  `~/klippy-env/bin/python -m pip install matplotlib`
 4.  Restart klipper
@@ -189,11 +193,11 @@ Check the env's Python version with `~/klippy-env/bin/python --version`.
 Run the `uninstall.sh` script to remove the module from Klipper:
 
 ```
-cd ~/klipper_auto_speed
+cd ~/klipper_better_auto_speed
 ./uninstall.sh
 ```
 
-It removes the `better_auto_speed` link from `~/klipper/klippy/extras` and restarts Klipper. Afterwards, delete the `[better_auto_speed]` section (and any `BETTER_AUTO_SPEED`-saved values) from your `printer.cfg`, then restart Klipper once more.
+It removes the `better_auto_speed` directory link from `~/klipper/klippy/extras` (or, for an older per-file install, only the links that point into this checkout). It does **not** restart Klipper. Afterwards, delete the `[better_auto_speed]` section (and any `BETTER_AUTO_SPEED`-saved values) from your config, then restart Klipper manually when the printer is idle.
 
 ### Configuration
 
@@ -224,6 +228,7 @@ The values listed below are the defaults Better Auto Speed uses. You can include
 #velocity_accu: 0.05   ; Keep binary searching until the result is within this percentage
 
 #derate: 0.8           ; Derate discovered results by this amount
+#scv: 5                ; square_corner_velocity (mm/s) used during test and validation moves; must be >1 and <50. Your own value is restored afterwards
 
 #z_position_speed: 25  ; Speed (mm/s) for positioning moves that change Z, e.g. centering/Z= move. Keeps belted/Trident Z from slamming after leveling
 #motor_off: 0          ; Issue M84 (disable steppers) once the run finishes
@@ -269,7 +274,8 @@ VELOCITY_DIV | 5 | Number of velocities to sweep when coupling
 MOTOR_OFF | 0 | Disable steppers (`M84`) when the run finishes. Overrides the `motor_off` config value for a single run
 LEVEL | 1 | Level the printer if it's not leveled
 VARIANCE | 1 | Check endstop variance
-SAVE | 1 | Queue recommended max_accel/max_velocity to `[printer]` (run `SAVE_CONFIG` to apply). Set `SAVE=0` to only print the results
+SAVE | 1 | Queue recommended max_accel/max_velocity to `[printer]` (run `SAVE_CONFIG` to apply). Set `SAVE=0` to only print the results. See [Saving results](#saving-results-save) for configs that set these in an included file
+SCV | 5 | `square_corner_velocity` (mm/s) used during test moves; overrides the `scv` config value for a single run
 X_CURRENT | Unset | Motor run-current (A) applied to the X axis during the run, restored after (requires TMC drivers)
 Y_CURRENT | Unset | Motor run-current (A) applied to the Y axis during the run, restored after (requires TMC drivers)
 Z_CURRENT | Unset | Motor run-current (A) applied to the Z axis during the run, restored after (requires TMC drivers)
@@ -278,6 +284,27 @@ Y_HOMING_SPEED | Unset | Homing speed (mm/s) applied to the Y axis during the ru
 Z_HOMING_SPEED | Unset | Homing speed (mm/s) applied to the Z axis during the run, restored after
 
 On CoreXY (`corexy`/`hybrid_corexy`/`markforged`) the A/B motors share current: a single `X_CURRENT` or `Y_CURRENT` is applied to both `stepper_x` and `stepper_y`; passing both with different values is allowed but warns. Current applies to every motor on an axis (e.g. dual/quad Z). Homing speed is always per-axis.
+
+##### Saving results (SAVE)
+
+With `SAVE=1` (the default for `BETTER_AUTO_SPEED`, `_ACCEL` and `_VELOCITY`; opt-in for `_VALIDATE`), Better Auto Speed queues `max_accel` / `max_velocity` under `[printer]` for `SAVE_CONFIG`. With `VALIDATE=1`, nothing is queued unless validation passes.
+
+Before queueing, it checks whether an included file sets each option, using Klipper's own config parser and include resolution on the file Klipper was started with:
+
+- **Not set, set in the main body of `printer.cfg`, or set in the `#*# SAVE_CONFIG` block**: the value is queued. Run `SAVE_CONFIG` to write it (this rewrites `printer.cfg` and restarts Klipper; Klipper comments out the old main-body line itself).
+- **Set in an included file** (for example Klippain-style `config/kinematics.cfg`), even if `printer.cfg` also sets it: the value is **not** queued. Klipper refuses a whole `SAVE_CONFIG` when a saved option conflicts with an included value (`SAVE_CONFIG section 'printer' option 'max_accel' conflicts with included value`), and that would also block saving anything else (bed mesh, probe data...) until Klipper restarts. Instead the console shows the recommended values and the file(s) to edit:
+
+  ```
+  BETTER AUTO SPEED did NOT queue max_accel, max_velocity: already set in an included config file (...)
+  Edit [printer] in /home/pi/printer_data/config/config/kinematics.cfg by hand:
+    max_accel: 8000
+    max_velocity: 400
+  then restart Klipper.
+  ```
+
+  Put those lines under `[printer]` in that file, then restart Klipper.
+
+The check is per option: if only `max_accel` is set in an include, `max_velocity` is still queued. If the config can't be read, nothing is queued and the values are printed for a manual edit.
 
 ##### Coupling acceleration and velocity
 
@@ -295,13 +322,13 @@ The throughput metric is the time of a representative point-to-point move sized 
 Argument | Default | Description
 ---------- | ------- | -----------
 AXIS | Unset | Perform test on these axes, defaults to diag_x, diag_y
-MARGIN | 20.0 | Used when DIST is 0.0, how far away from axis to perform movements
+MARGIN | 20.0 | How far away from your axis maximums to perform movements
 DERATE | 0.8 | How much to derate maximum values for the recommended max
 MAX_MISSED | 1.0 | Maximum fulls steps that can be missed
 ACCEL_MIN | auto | Minimum acceleration test may try (auto: from axis travel when a fixed VELOCITY is given, else 1000)
 ACCEL_MAX | auto | Maximum acceleration test may try (auto: 100000)
 ACCEL_ACCU | 0.05 | Keep binary searching until the result is within this percentage
-SAVE | 1 | Queue recommended max_accel to `[printer]` (run `SAVE_CONFIG` to apply). Set `SAVE=0` to only print the result
+SAVE | 1 | Queue recommended max_accel to `[printer]` (run `SAVE_CONFIG` to apply). Set `SAVE=0` to only print the result. See [Saving results](#saving-results-save)
 X_CURRENT | Unset | Motor run-current (A) applied to X during the run, restored after (requires TMC drivers)
 Y_CURRENT | Unset | Motor run-current (A) applied to Y during the run, restored after (requires TMC drivers)
 Z_CURRENT | Unset | Motor run-current (A) applied to Z during the run, restored after (requires TMC drivers)
@@ -315,13 +342,13 @@ Z_HOMING_SPEED | Unset | Homing speed (mm/s) applied to Z during the run, restor
 Argument | Default | Description
 ------------- | ------- | -----------
 AXIS | Unset | Perform test on these axes, defaults to diag_x, diag_y
-MARGIN | 20.0 | Used when DIST is 0.0, how far away from axis to perform movements
+MARGIN | 20.0 | How far away from your axis maximums to perform movements
 DERATE | 0.8 | How much to derate maximum values for the recommended max
 MAX_MISSED | 1.0 | Maximum fulls steps that can be missed
 VELOCITY_MIN | auto | Minimum velocity test may try (auto: 50)
 VELOCITY_MAX | auto | Maximum velocity test may try (auto: `sqrt(accel_max * axis travel)`)
 VELOCITY_ACCU | 0.05 | Keep binary searching until the result is within this percentage
-SAVE | 1 | Queue recommended max_velocity to `[printer]` (run `SAVE_CONFIG` to apply). Set `SAVE=0` to only print the result
+SAVE | 1 | Queue recommended max_velocity to `[printer]` (run `SAVE_CONFIG` to apply). Set `SAVE=0` to only print the result. See [Saving results](#saving-results-save)
 X_CURRENT | Unset | Motor run-current (A) applied to X during the run, restored after (requires TMC drivers)
 Y_CURRENT | Unset | Motor run-current (A) applied to Y during the run, restored after (requires TMC drivers)
 Z_CURRENT | Unset | Motor run-current (A) applied to Z during the run, restored after (requires TMC drivers)
@@ -342,6 +369,7 @@ VALIDATE_INNER_MARGIN | 20.0 | Margin from axes center pattern can move to
 VALIDATE_ITERATIONS | 50 | Repeat the pattern this many times
 ACCEL | Unset | Defaults to current max accel
 VELOCITY | Unset | Defaults to current max velocity
+SAVE | 0 | Queue the validated accel/velocity to `[printer]` when validation passes. See [Saving results](#saving-results-save)
 X_CURRENT | Unset | Motor run-current (A) applied to X during the run, restored after (requires TMC drivers)
 Y_CURRENT | Unset | Motor run-current (A) applied to Y during the run, restored after (requires TMC drivers)
 Z_CURRENT | Unset | Motor run-current (A) applied to Z during the run, restored after (requires TMC drivers)
@@ -357,7 +385,7 @@ You must specify `VELOCITY_MIN` and `VELOCITY_MAX`.
 | Argument        | Default | Description                                                        |
 | --------------- | ------- | ------------------------------------------------------------------ |
 | AXIS            | Unset   | Perform test on these axes, defaults to diag_x, diag_y             |
-| MARGIN          | 20.0    | Used when DIST is 0.0, how far away from axis to perform movements |
+| MARGIN          | 20.0    | How far away from axis to perform movements                        |
 | DERATE          | 0.8     | How much to derate maximum values for the recommended max          |
 | MAX_MISSED      | 1.0     | Maximum fulls steps that can be missed                             |
 | VELOCITY_MIN    | Unset   | Minimum velocity test may try                                      |

@@ -39,32 +39,83 @@ class InstallTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
         return result
 
+    @property
+    def package(self):
+        return self.extras / 'better_auto_speed'
+
+    def make_legacy_install(self):
+        # Layout created by earlier install.sh versions: one link per module.
+        self.package.mkdir()
+        for source in sorted((ROOT / 'better_auto_speed').glob('*.py')):
+            (self.package / source.name).symlink_to(source)
+        (self.package / '__pycache__').mkdir()
+        (self.package / '__pycache__' / 'main.cpython-311.pyc').write_bytes(b'cache')
+
     def test_external_cwd_custom_paths_idempotence_and_safe_uninstall(self):
         self.run_script('install.sh')
         self.run_script('install.sh')
-        package = self.extras / 'better_auto_speed'
-        self.assertEqual((package / 'main.py').resolve(), ROOT / 'better_auto_speed/main.py')
-        unrelated = package / 'keep.txt'
-        unrelated.write_text('user data')
+        self.assertTrue(self.package.is_symlink())
+        self.assertEqual(self.package.resolve(), ROOT / 'better_auto_speed')
         self.run_script('uninstall.sh')
-        self.assertFalse((package / 'main.py').exists())
-        self.assertEqual(unrelated.read_text(), 'user data')
+        self.assertFalse(self.package.exists() or self.package.is_symlink())
+        self.assertTrue((ROOT / 'better_auto_speed/main.py').exists())
         self.assertFalse(self.log.exists())
 
-    def test_refuses_unrelated_file_before_linking(self):
-        package = self.extras / 'better_auto_speed'
-        package.mkdir()
-        (package / 'main.py').write_text('user data')
+    def test_migrates_legacy_per_file_install(self):
+        self.make_legacy_install()
+        result = self.run_script('install.sh')
+        self.assertIn('Migrated', result.stdout)
+        self.assertTrue(self.package.is_symlink())
+        self.assertEqual(self.package.resolve(), ROOT / 'better_auto_speed')
+        self.assertTrue((ROOT / 'better_auto_speed/main.py').exists())
+
+    def test_refuses_to_migrate_unrelated_file(self):
+        self.make_legacy_install()
+        (self.package / 'keep.txt').write_text('user data')
+        result = self.run_script('install.sh', success=False)
+        self.assertIn('unrelated file', result.stderr)
+        self.assertFalse(self.package.is_symlink())
+        self.assertEqual((self.package / 'keep.txt').read_text(), 'user data')
+        self.assertTrue((self.package / 'main.py').is_symlink())
+
+    def test_refuses_to_migrate_foreign_link(self):
+        self.make_legacy_install()
+        foreign = self.base / 'other.py'
+        foreign.write_text('other checkout')
+        (self.package / 'main.py').unlink()
+        (self.package / 'main.py').symlink_to(foreign)
         self.run_script('install.sh', success=False)
-        self.assertEqual((package / 'main.py').read_text(), 'user data')
-        self.assertFalse((package / '__init__.py').exists())
+        self.assertFalse(self.package.is_symlink())
+        self.assertEqual((self.package / 'main.py').resolve(), foreign)
+
+    def test_refuses_unrelated_file_before_linking(self):
+        self.package.mkdir()
+        (self.package / 'main.py').write_text('user data')
+        self.run_script('install.sh', success=False)
+        self.assertEqual((self.package / 'main.py').read_text(), 'user data')
+        self.assertFalse((self.package / '__init__.py').exists())
+
+    def test_refuses_unrelated_symlink(self):
+        other = self.base / 'other_package'
+        other.mkdir()
+        self.package.symlink_to(other, target_is_directory=True)
+        self.run_script('install.sh', success=False)
+        self.run_script('uninstall.sh', success=False)
+        self.assertEqual(self.package.resolve(), other)
+
+    def test_uninstall_legacy_layout_keeps_unrelated_files(self):
+        self.make_legacy_install()
+        (self.package / 'keep.txt').write_text('user data')
+        self.run_script('uninstall.sh')
+        self.assertFalse((self.package / 'main.py').is_symlink())
+        self.assertEqual((self.package / 'keep.txt').read_text(), 'user data')
+        self.assertTrue((ROOT / 'better_auto_speed/main.py').exists())
 
     def test_manual_directory_symlink(self):
-        package = self.extras / 'better_auto_speed'
-        package.symlink_to(ROOT / 'better_auto_speed', target_is_directory=True)
+        self.package.symlink_to(ROOT / 'better_auto_speed', target_is_directory=True)
         self.run_script('install.sh')
         self.run_script('uninstall.sh')
-        self.assertFalse(package.is_symlink())
+        self.assertFalse(self.package.is_symlink())
         self.assertTrue((ROOT / 'better_auto_speed/main.py').exists())
 
     def test_explicit_service_only(self):

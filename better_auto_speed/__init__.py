@@ -19,5 +19,5 @@ def load_config(config): # Called by klipper from [better_auto_speed]
         # symlink, etc.) is visible in klippy.log instead of a generic message.
         raise ImportError(
             f"Failed to import better_auto_speed; please re-run "
-            f"klipper_auto_speed/install.sh ({err})") from err
+            f"klipper_better_auto_speed/install.sh ({err})") from err
     return BetterAutoSpeed(config)

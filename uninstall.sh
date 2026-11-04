@@ -11,18 +11,23 @@ if [[ "${1:-}" == --help ]]; then
     exit 0
 fi
 [[ $# == 0 ]] || { echo 'Unknown argument; use --help' >&2; exit 1; }
+PACKAGE="$SRCDIR/better_auto_speed"
 if [[ -L "$EXTRA_PATH" ]]; then
-    [[ "$(readlink -- "$EXTRA_PATH")" == "$SRCDIR/better_auto_speed" ||
-       "$(readlink -f -- "$EXTRA_PATH")" == "$SRCDIR/better_auto_speed" ]] || {
+    # Directory-link layout (default since installs link the whole package).
+    [[ "$(readlink -- "$EXTRA_PATH")" == "$PACKAGE" ||
+       "$(readlink -f -- "$EXTRA_PATH")" == "$PACKAGE" ]] || {
         echo "Refusing to remove unrelated symlink: $EXTRA_PATH" >&2; exit 1;
     }
     unlink -- "$EXTRA_PATH"
 elif [[ -d "$EXTRA_PATH" ]]; then
-    for target in "$EXTRA_PATH"/*.py; do
-        if [[ -L "$target" && "$(readlink -- "$target")" == "$SRCDIR/better_auto_speed/$(basename -- "$target")" ]]; then
+    # Legacy per-file layout: remove only links into this checkout.
+    shopt -s dotglob nullglob
+    for target in "$EXTRA_PATH"/*; do
+        if [[ -L "$target" && "$(readlink -- "$target")" == "$PACKAGE/$(basename -- "$target")" ]]; then
             unlink -- "$target"
         fi
     done
+    shopt -u dotglob nullglob
     # Leave caches and unrelated files intact.
     rmdir -- "$EXTRA_PATH" 2>/dev/null || true
 fi

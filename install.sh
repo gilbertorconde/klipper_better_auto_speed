@@ -1,5 +1,5 @@
 #!/bin/bash
-# Install links without restarting a printer unless explicitly requested.
+# Install the package link without restarting a printer unless explicitly requested.
 set -euo pipefail
 
 SRCDIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,25 +21,41 @@ fi
 }
 "${KLIPPY_ENV}/bin/python" -c 'import sys; assert sys.version_info >= (3, 8), "Python 3.8+ is required"'
 
-# Keep manual directory-symlink installations intact; reject unrelated targets.
+# Install one directory symlink so modules added by future updates are found
+# without re-running this script (Moonraker no longer runs install_script).
+PACKAGE="$SRCDIR/better_auto_speed"
 if [[ -L "$EXTRA_PATH" ]]; then
-    [[ "$(readlink -f -- "$EXTRA_PATH")" == "$SRCDIR/better_auto_speed" ]] || {
+    [[ "$(readlink -f -- "$EXTRA_PATH")" == "$PACKAGE" ]] || {
         echo "Refusing to replace unrelated symlink: $EXTRA_PATH" >&2; exit 1;
     }
+    echo "Already linked: $EXTRA_PATH -> $PACKAGE"
 else
-    # Preflight every destination before changing any link.
-    for source in "$SRCDIR"/better_auto_speed/*.py; do
-        target="$EXTRA_PATH/$(basename -- "$source")"
-        if [[ -e "$target" || -L "$target" ]]; then
-            [[ -L "$target" && "$(readlink -- "$target")" == "$source" ]] || {
-                echo "Refusing to overwrite unrelated file: $target" >&2; exit 1;
+    if [[ -e "$EXTRA_PATH" ]]; then
+        # Migrate the legacy per-file layout only if it holds nothing but links
+        # into this checkout and Python caches.
+        [[ -d "$EXTRA_PATH" ]] || { echo "Refusing to replace unrelated file: $EXTRA_PATH" >&2; exit 1; }
+        shopt -s dotglob nullglob
+        for target in "$EXTRA_PATH"/*; do
+            name="$(basename -- "$target")"
+            if [[ "$name" == __pycache__ && -d "$target" && ! -L "$target" ]]; then
+                continue
+            fi
+            [[ -L "$target" && "$(readlink -- "$target")" == "$PACKAGE/$name" ]] || {
+                echo "Refusing to migrate $EXTRA_PATH: it contains unrelated file $target" >&2
+                echo 'Move it away (or remove the directory) and re-run install.sh.' >&2
+                exit 1
             }
-        fi
-    done
-    mkdir -p -- "$EXTRA_PATH"
-    for source in "$SRCDIR"/better_auto_speed/*.py; do
-        ln -sfn -- "$source" "$EXTRA_PATH/$(basename -- "$source")"
-    done
+        done
+        for target in "$EXTRA_PATH"/*; do
+            if [[ -L "$target" ]]; then unlink -- "$target"; fi
+        done
+        shopt -u dotglob nullglob
+        # __pycache__ holds only compiled copies of this package's modules.
+        rm -rf -- "$EXTRA_PATH/__pycache__"
+        rmdir -- "$EXTRA_PATH"
+        echo "Migrated legacy per-file links in $EXTRA_PATH to a directory link."
+    fi
+    ln -s -- "$PACKAGE" "$EXTRA_PATH"
 fi
 
 if [[ "${INSTALL_PLOTTING:-0}" == 1 ]]; then
