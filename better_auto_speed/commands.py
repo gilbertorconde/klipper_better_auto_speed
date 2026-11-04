@@ -17,6 +17,7 @@ from .funcs import calculate_accel, calculate_graph, calculate_move_time
 from .wrappers import ResultsWrapper, AttemptWrapper
 from .axes import parse_axis, axis_to_str, SUPPORTED_KINEMATICS
 from .plotting import render_graph
+from .config_save import find_included_definitions
 
 
 def clone_command(gcmd, **params):
@@ -617,18 +618,46 @@ class AutoSpeedCommands:
         for value in (accel, velocity):
             if value is not None and (not isfinite(value) or round(value) <= 0):
                 raise gcmd.error('Cannot save nonfinite or nonpositive limits')
-        configfile = self.machine.printer.lookup_object('configfile')
-        saved = []
+        values = {}
         if accel is not None:
-            configfile.set('printer', 'max_accel', round(accel))
-            saved.append(f"max_accel={round(accel)}")
+            values['max_accel'] = round(accel)
         if velocity is not None:
-            configfile.set('printer', 'max_velocity', round(velocity))
-            saved.append(f"max_velocity={round(velocity)}")
-        if saved:
+            values['max_velocity'] = round(velocity)
+        if not values:
+            return
+        printer = self.machine.printer
+        configfile = printer.lookup_object('configfile')
+        try:
+            included = find_included_definitions(printer, configfile, 'printer', list(values))
+        except Exception as err:
+            # Never guess: a conflicting queued value blocks every SAVE_CONFIG.
+            included = None
+            reason = f"could not check where [printer] is defined ({err})"
+        else:
+            reason = ("already set in an included config file, and SAVE_CONFIG refuses "
+                      "to override included values (that would block every SAVE_CONFIG)")
+        manual = {k: v for k, v in values.items() if included is None or k in included}
+        queued = {k: v for k, v in values.items() if k not in manual}
+        for option, value in queued.items():
+            configfile.set('printer', option, value)
+        if queued:
             self.gcode.respond_info(
-                "BETTER AUTO SPEED queued to [printer]: " + ", ".join(saved) +
+                "BETTER AUTO SPEED queued to [printer]: " +
+                ", ".join(f"{k}={v}" for k, v in queued.items()) +
                 "\nRun SAVE_CONFIG to apply (this rewrites printer.cfg and restarts Klipper).")
+        if manual:
+            files = []
+            for option in manual:
+                for path in (included or {}).get(option) or []:
+                    if path not in files:
+                        files.append(path)
+            where = ", ".join(files) if files else (
+                "your included config files" if included is not None else "your config")
+            self.gcode.respond_info(
+                "BETTER AUTO SPEED did NOT queue " + ", ".join(manual) + ": " + reason + ".\n"
+                f"Edit [printer] in {where} by hand:\n" +
+                "".join(f"  {k}: {v}\n" for k, v in manual.items()) +
+                "then restart Klipper.")
 
     def _prepare(self, gcmd):
         self.machine.check_homed(gcmd)
